@@ -1,0 +1,850 @@
+# -*- coding: utf-8 -*
+import torch
+import torch.nn as nn
+import torch.nn.init
+import torchvision.models as models
+from torch.autograd import Variable
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+import torch.backends.cudnn as cudnn
+# clip_grad_norm_ for 0.4.0, clip_grad_norm for 0.3.1
+from torch.nn.utils.clip_grad import clip_grad_norm_
+import numpy as np
+from collections import OrderedDict
+import torch.nn.functional as F
+from loss import TripletLoss, LabLoss
+from basic.wordbigfile import WordBigFile
+from transformers import BertModel, BertTokenizer, BertConfig
+from torch.autograd import Function
+from basic.constant import device
+
+"""模型具体结构说明的代码文件
+"""
+
+
+def get_we_parameter(vocab, w2v_file):
+    # w2v的映射
+    w2v_reader = WordBigFile(w2v_file)
+    ndims = w2v_reader.ndims
+
+    we = []
+    # we.append([0]*ndims)
+    for i in range(len(vocab)):
+        try:
+            # 传入单词 获取向量表示 每个词dim 500
+            vec = w2v_reader.read_one(vocab.idx2word[i])
+        except BaseException:
+            vec = np.random.uniform(-1, 1, ndims)
+        we.append(vec)
+    print(
+        'getting pre-trained parameter for word embedding initialization',
+        np.shape(we))
+    return np.array(we)
+
+
+def l2norm(X):
+    """L2-normalize columns of X
+    """
+    norm = torch.pow(X, 2).sum(dim=1, keepdim=True).sqrt()
+    X = torch.div(X, norm)
+    return X
+
+
+def xavier_init_fc(fc):
+    """Xavier initialization for the fully connected layer
+    """
+    r = np.sqrt(6.) / np.sqrt(fc.in_features +
+                              fc.out_features)
+    fc.weight.data.uniform_(-r, r)
+    fc.bias.data.fill_(0)
+
+
+# 全连接模块
+class MFC(nn.Module):
+    """
+    Multi Fully Connected Layers
+    """
+
+    def __init__(
+            self,
+            fc_layers,
+            dropout,
+            have_dp=True,
+            have_bn=False,
+            have_last_bn=False):
+        super(MFC, self).__init__()
+        # fc layers
+        self.n_fc = len(fc_layers)
+        if self.n_fc > 1:
+            if self.n_fc > 1:
+                # 视频文字全连接层输出 权值矩阵W维度（拼接的视觉特征维度 * 最终公共空间的嵌入维度）
+                self.fc1 = nn.Linear(fc_layers[0], fc_layers[1])
+
+            # dropout
+            self.have_dp = have_dp
+            if self.have_dp:
+                self.dropout = nn.Dropout(p=dropout)
+
+            # batch normalization
+            self.have_bn = have_bn
+            self.have_last_bn = have_last_bn
+            if self.have_bn:
+                if self.n_fc == 2 and self.have_last_bn:
+                    # 对最后一层进行归一化
+                    self.bn_1 = nn.BatchNorm1d(fc_layers[1])
+
+        self.init_weights()
+
+    def init_weights(self):
+        """Xavier initialization for the fully connected layer
+        """
+        if self.n_fc > 1:
+            xavier_init_fc(self.fc1)
+
+    def forward(self, inputs):
+
+        if self.n_fc <= 1:
+            features = inputs
+
+        elif self.n_fc == 2:
+            features = self.fc1(inputs)
+            # batch noarmalization
+            if self.have_bn and self.have_last_bn:
+                features = self.bn_1(features)
+            if self.have_dp:
+                features = self.dropout(features)
+        return features
+
+
+# 多头目注意力机制
+class MultiHeadSelfAttention(nn.Module):
+    """Self-attention module by Lin, Zhouhan, et al. ICLR 2017"""
+
+    def __init__(self, w1_row, w1_col, w2_col):
+        super(MultiHeadSelfAttention, self).__init__()
+
+        self.w_1 = nn.Linear(w1_row, w1_col, bias=False)
+        self.w_2 = nn.Linear(w1_col, w2_col, bias=False)
+        self.tanh = nn.Tanh()
+        # self.softmax_1 = nn.Softmax(dim=1)
+
+        self.softmax_0 = nn.Softmax(dim=0)
+        self.init_weights()
+
+    def init_weights(self):
+        nn.init.xavier_uniform_(self.w_1.weight)
+        nn.init.xavier_uniform_(self.w_2.weight)
+
+    def forward(self, x, mask=None):
+        # This expects input x to be of size (b x seqlen x d_feat)
+        atten_1 = self.w_2(self.tanh(self.w_1(x)))
+        atten_1 = torch.mean(atten_1, dim=-1, keepdim=True)
+
+        weight = torch.zeros_like(atten_1).to(device)
+        for i, batch in enumerate(atten_1):
+            weight[i, :mask[i]] = self.softmax_0(batch[:mask[i]])
+
+        output_1 = (weight * x).mean(dim=1)
+        return output_1
+
+
+# 视频数据多层级编码
+class Video_multilevel_encoding(nn.Module):
+    """
+    Section 3.1. Video-side Multi-level Encoding
+    """
+
+    def __init__(self, opt):
+        super(Video_multilevel_encoding, self).__init__()
+
+        self.rnn_output_size = opt.visual_rnn_size * 2
+        self.dropout = nn.Dropout(p=opt.dropout)
+        self.visual_norm = opt.visual_norm
+        self.concate = opt.concate
+
+        # visual bidirectional rnn encoder
+        self.rnn = nn.GRU(
+            opt.visual_feat_dim,
+            opt.visual_rnn_size,
+            batch_first=True,
+            bidirectional=True)
+
+        self.atten = MultiHeadSelfAttention(opt.visual_feat_dim, int(opt.visual_feat_dim // 4), 3)
+
+        # visual 1-d convolutional network
+        self.convs1 = nn.ModuleList([
+            nn.Conv2d(1, opt.visual_kernel_num, (window_size, self.rnn_output_size), padding=(window_size - 1, 0))
+            for window_size in opt.visual_kernel_sizes
+        ])
+
+        # visual mapping
+        self.visual_mapping = MFC(
+            opt.visual_mapping_size,
+            opt.dropout,
+            have_bn=True,
+            have_last_bn=True)
+
+        # 添加注意力机制的部分
+        self.fc = nn.Linear(opt.visual_feat_dim, opt.visual_feat_dim)
+
+    def forward(self, videos):
+        """Extract video_frames feature vectors."""
+        # videos:batchsize * 最大帧数 * 2048,mean_original:batchsize * 2048,视频帧数,mask:batchsize*最大帧数
+        videos, videos_origin, lengths, vidoes_mask = videos
+
+        # Level 1. Global Encoding by Mean Pooling According（level 1 平均值）
+        org_out = videos_origin
+
+        # Level 2. Temporal-Aware Encoding by biGRU
+        # 视觉gru_init_out维度: batchsize（批样本数） * 最大帧(序列长度) * 2048(2048是hidden_size*num_directions,隐层向量大小乘上方向个数)
+        gru_init_out, _ = self.rnn(videos)
+        # print("visual feature after bi-gru:", gru_init_out.size())
+        mean_gru = torch.zeros(
+            gru_init_out.size(0),
+            self.rnn_output_size).to(device)
+        for i, batch in enumerate(gru_init_out):
+            mean_gru[i] = torch.mean(batch[:lengths[i]], 0)
+        gru_out = mean_gru
+        gru_out = self.dropout(gru_out)  # level 2后面用到了drop_out
+
+        # Level 3. Local-Enhanced Encoding by biGRU-CNN
+        # (N,C,F1)    #unsqueeze:第三维加上一维 -> batchsize * 最大帧数 * 1024
+        vidoes_mask = vidoes_mask.unsqueeze(
+            2).expand(-1, -1, gru_init_out.size(2))
+        gru_init_out = gru_init_out * vidoes_mask  # 得到卷积后的值
+        con_out = gru_init_out.unsqueeze(1)  # 在第二维加上一维
+        con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
+        con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
+        con_out = torch.cat(con_out, 1)
+        con_out = self.dropout(con_out)
+
+        # 注意力机制层
+        output = self.atten(videos, lengths)
+
+        # concatenation
+        if self.concate == 'full':  # level 1+2+3
+            features = torch.cat((gru_out, con_out, org_out, output), 1)  # size (64L, 8192L)
+        elif self.concate == 'reduced':  # wmy
+            # level 2+3
+            features = torch.cat((gru_out, con_out, output), 1)  # 6144
+            # level 1+2
+            # features = torch.cat((gru_out, org_out, output), 1)
+            # level 1+3
+            # features = torch.cat((con_out, org_out, output), 1)
+            # level 1
+            # features = torch.cat((org_out, output), 1)
+            # level 2
+            # features = gru_out
+            # level 3
+            # features = con_out
+        # print("before FC visual feature dim", features.size())
+        # mapping to common space
+        features = self.visual_mapping(features)
+        if self.visual_norm:
+            features = l2norm(features)
+
+        return features
+
+    def load_state_dict(self, state_dict):
+        """Copies parameters. overwritting the default one to
+        accept state_dict from Full model
+        """
+        own_state = self.state_dict()
+        new_state = OrderedDict()
+        for name, param in state_dict.items():
+            if name in own_state:
+                new_state[name] = param
+
+        super(Video_multilevel_encoding, self).load_state_dict(new_state)
+
+
+# 文本数据（利用transformer进行处理）多层级编码
+class Text_transformers_encoding(nn.Module):
+    """
+    multi-level encoding
+    process text feature with transformers
+    """
+
+    def __init__(self, opt):
+        super(Text_transformers_encoding, self).__init__()
+        self.text_norm = opt.text_norm
+        self.hidden_size = opt.text_transformers_hidden_size
+        self.concate = opt.concate
+        # device
+        self.device = torch.device(device)
+        # initial bert model
+        # modify the default configuration
+        self.configuration = BertConfig(num_hidden_layers=3, num_attention_heads=12)
+        self.pretrained_weights = 'bert-base-uncased'
+        self.model = BertModel.from_pretrained(self.pretrained_weights, config=self.configuration)
+
+        # 1-d convolutional network
+        self.convs1 = nn.ModuleList([
+            nn.Conv2d(1, opt.text_kernel_num, (window_size, self.hidden_size), padding=(window_size - 1, 0))
+            for window_size in opt.text_kernel_sizes
+        ])
+        # multi fc layers
+        self.text_mapping = MFC(
+            opt.text_mapping_size,
+            opt.dropout,
+            have_bn=True,
+            have_last_bn=True)
+        # dropout
+        self.dropout = nn.Dropout(p=opt.dropout)
+
+    def forward(self, text):
+        cap_bows, tokens, type_ids, mask = text
+        # tokens = tokens.to(self.device)
+        # type_ids = type_ids.to(self.device)
+        # mask = mask.to(self.device)
+        # last_hidden_state,  pooler_output(cls token), hidden_states(type: tuple, one for each layer)
+        # if need hidden-state outputs, set Param output_hidden_states=True
+        outputs = self.model(input_ids=tokens, token_type_ids=type_ids,
+                             attention_mask=mask)
+        # one-hot encoding
+        org_out = cap_bows
+        # print("org_out:", org_out.size(1))
+        # bert word embedding
+        # bert_embed = torch.zeros(len(tokens), self.hidden_size).cuda()
+        # for i, batch in enumerate(outputs[0]):
+        #     bert_embed[i] = torch.mean(batch[:int(torch.sum(mask[i]))], 0)
+        # average of last two Hidden-state
+        # hidden_sum = torch.stack(outputs[2], 0)[-2:].sum(0)
+        # average_last_2_layers = torch.zeros(len(tokens), self.hidden_size).cuda()
+
+        # for i, batch in enumerate(hidden_sum):
+        #     average_last_2_layers[i] = torch.mean(batch[:int(torch.sum(mask[i]))], 0)
+
+        # OUTPUT of TRANSFORMERS (without intermediate states)
+        last_hidden = outputs[0]
+        tf_out = torch.zeros(len(tokens), self.hidden_size).to(device)
+        for i, batch in enumerate(last_hidden):
+            tf_out[i] = torch.mean(batch[:int(torch.sum(mask[i]))], 0)
+
+        # features by CNN
+        con_out = last_hidden.unsqueeze(1)
+        con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
+        con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
+        con_out = torch.cat(con_out, 1)
+        con_out = self.dropout(con_out)
+        # concatenation
+        features = None
+        if self.concate == 'full':  # level 1+2+3  4318+768+1536
+            features = torch.cat((org_out, tf_out, con_out), 1)
+        elif self.concate == 'reduced':
+            # level 2+3
+            features = torch.cat((tf_out, con_out), 1)
+            # level 1+3
+            # features = torch.cat((org_out, con_out), 1)
+
+        # mapping to common space
+        features = self.text_mapping(features)
+        if self.text_norm:
+            features = l2norm(features)
+
+        return features
+
+
+# 文本数据（利用bi-gru处理）多层级编码
+class Text_multilevel_encoding(nn.Module):
+    """
+    Section 3.2. Text-side Multi-level Encoding
+    process text feature with bi-gru
+    """
+
+    def __init__(self, opt):
+        super(Text_multilevel_encoding, self).__init__()
+        self.text_norm = opt.text_norm
+        self.word_dim = opt.word_dim
+        self.we_parameter = opt.we_parameter
+        self.rnn_output_size = opt.text_rnn_size * 2
+        self.dropout = nn.Dropout(p=opt.dropout)
+        self.concate = opt.concate
+        self.embed = nn.Embedding(opt.vocab_size, opt.word_dim)
+        self.rnn = nn.GRU(
+            opt.word_dim,
+            opt.text_rnn_size,
+            batch_first=True,
+            bidirectional=True)
+
+        # 1-d convolutional network
+        self.convs1 = nn.ModuleList([
+            nn.Conv2d(1, opt.text_kernel_num, (window_size, self.rnn_output_size), padding=(window_size - 1, 0))
+            for window_size in opt.text_kernel_sizes
+        ])
+
+        # multi fc layers
+        self.text_mapping = MFC(
+            opt.text_mapping_size,
+            opt.dropout,
+            have_bn=True,
+            have_last_bn=True)
+
+        self.init_weights()
+
+    def init_weights(self):
+        # 初始化成从flickr语料库预训练的词向量
+        if self.word_dim == 500 and self.we_parameter is not None:
+            self.embed.weight.data.copy_(torch.from_numpy(self.we_parameter))
+        else:
+            self.embed.weight.data.uniform_(-0.1, 0.1)
+
+    def forward(self, text, *args):
+        # Embed word ids to vectors
+        # cap_wids, cap_w2vs, cap_bows, cap_mask = x
+        cap_wids, cap_bows, lengths, cap_mask = text
+
+        # Level 1. Global Encoding by Mean Pooling According
+        # one-hot encoding 一条描述就一个向量表示
+        org_out = cap_bows
+
+        # Level 2. Temporal-Aware Encoding by biGRU
+        # 按序列中出现的索引号取得相应的词向量表示
+        cap_wids = self.embed(cap_wids)
+
+        packed = pack_padded_sequence(cap_wids, lengths, batch_first=True)
+
+        # 文本双向gru输出维度 batchsize*sequence_len(序列长度)*1024(表示hidden_size*num_directions)
+        gru_init_out, _ = self.rnn(packed)
+        # Reshape *final* output to (batch_size, hidden_size*num_directions)
+        padded = pad_packed_sequence(gru_init_out, batch_first=True)
+
+        gru_init_out = padded[0]
+        # print(gru_init_out.size())  e.g torch.Size([128,20,1024])
+        gru_out = torch.zeros(padded[0].size(0), self.rnn_output_size).to(device)
+        for i, batch in enumerate(padded[0]):
+            gru_out[i] = torch.mean(batch[:lengths[i]], 0)
+        gru_out = self.dropout(gru_out)
+
+        # Level 3. Local-Enhanced Encoding by biGRU-CNN
+        con_out = gru_init_out.unsqueeze(1)
+        con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
+        con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
+        con_out = torch.cat(con_out, 1)
+        con_out = self.dropout(con_out)
+
+        # concatenation
+        if self.concate == 'full':  # level 1+2+3
+            features = torch.cat((org_out, gru_out, con_out), 1)  #
+        elif self.concate == 'reduced':  # wmy
+            # level 2+3
+            features = torch.cat((gru_out, con_out), 1)
+            # level 1+2
+            # features = torch.cat((org_out, gru_out), 1)
+            # level 1+3
+            # features = torch.cat((org_out, con_out), 1)
+            # level 1
+            # features = org_out
+            # level 2
+            # features = gru_out
+            # level 3
+            # features = con_out
+
+        # mapping to common space
+        features = self.text_mapping(features)
+        if self.text_norm:
+            features = l2norm(features)
+
+        return features
+
+
+# BaseModel封装了一些基础的逻辑
+# 我们的模型会继承于basemodel
+class BaseModel(object):
+
+    def state_dict(self):
+        state_dict = [
+            self.vid_encoding.state_dict(),
+            self.text_encoding.state_dict(),
+            self.brand_encoding.state_dict(),
+            self.fusion_encoding.state_dict()]
+        return state_dict
+
+    def load_state_dict(self, state_dict):
+        self.vid_encoding.load_state_dict(state_dict[0])
+        self.text_encoding.load_state_dict(state_dict[1])
+        self.brand_encoding.load_state_dict(state_dict[2])
+        self.fusion_encoding.load_state_dict(state_dict[3])
+
+    def train_start(self):
+        """switch to train mode
+        """
+        self.vid_encoding.train()
+        self.text_encoding.train()
+        self.brand_encoding.train()
+        self.fusion_encoding.train()
+
+    def val_start(self):
+        """switch to evaluate mode
+        """
+        self.vid_encoding.eval()
+        self.text_encoding.eval()
+        self.brand_encoding.eval()
+        self.fusion_encoding.eval()
+
+    def forward_loss(self, brand_ids, brand_emb, post_emb, *agrs, **kwargs):
+        """Compute the loss given pairs of video_frames and caption embeddings
+        """
+        loss = self.criterion(brand_ids, brand_emb, post_emb)
+        # print("loss device:", loss.device) cuda
+        # loss.item() for 0.4.0, loss.data[0] for 0.3.1
+        if torch.__version__ == '0.3.1':
+            self.logger.update('Le', loss.data[0], brand_emb.size(0))
+        else:
+            self.logger.update('Le', loss.item(), brand_emb.size(0))
+        return loss
+
+    def lab_emb(self, brand_ids, *args):
+        brand_embs = self.embedd_lab(brand_ids)
+        loss_lab = self.lab_criterion(brand_embs)
+        self.brand_optimizer.zero_grad()
+        loss_lab.backward()
+        self.brand_optimizer.step()
+        return brand_embs.size(0), loss_lab.item()
+
+    def train_emb(self, brand_ids, videos, captions, *args):
+        """One training step given videos and captions.
+        """
+        self.Eiters += 1
+        self.logger.update('Eit', self.Eiters)
+        self.logger.update('lr', self.optimizer.param_groups[0]['lr'])
+
+        # compute the embeddings
+        brand_emb, post_emb = self.forward_emb(brand_ids, videos, captions, False)
+
+        # measure accuracy and record loss
+        self.optimizer.zero_grad()
+        loss = self.forward_loss(brand_ids, brand_emb, post_emb)
+        # print(loss)
+        # print(loss.item())
+
+        if torch.__version__ == '0.3.1':
+            loss_value = loss.data[0]
+        else:
+            loss_value = loss.item()
+        # compute gradient and do SGD step
+        # loss = loss.cpu()
+
+        loss.backward()
+        if self.grad_clip > 0:
+            clip_grad_norm_(self.params1, self.grad_clip)
+        self.optimizer.step()
+
+        return post_emb.size(0), loss_value
+
+
+# L1惩罚项
+class L1Penalty(Function):
+
+    @staticmethod
+    def forward(ctx, input):
+        ctx.save_for_backward(input)
+        return input.clone()
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        input, = ctx.saved_variables
+        # torch.sign() 符号函数
+        grad_input = input.clone().sign().mul(0.0001)
+        grad_input += grad_output
+        return grad_input
+
+
+# 对Brand进行特征表示的模块
+class BrandAspects(nn.Module):
+    """used for get Brand embedding in validation/test set"""
+
+    def __init__(self, opt):
+        super(BrandAspects, self).__init__()
+
+        self.brand_num = opt.brand_num
+        # final embedding dim in common space
+        self.common_embedding_size = opt.common_embedding_size
+        self.num_aspects = 2000
+        # brand one-hot embedding
+        # 升维与否此处需要调整
+        self.brand_embeddings = nn.Embedding(self.brand_num, self.common_embedding_size)
+        # 2000*2048
+        self.aspects_embeddings = nn.Parameter(torch.randn(self.num_aspects, self.common_embedding_size),
+                                               requires_grad=True)
+        self.dropout = nn.Dropout()
+
+    def forward(self, brand_list):
+        # len(brand_list)*2000
+        brand_weights = self.brand_embeddings(brand_list)
+        # L1 regularization
+        # brand_weights = L1Penalty.apply(brand_weights)
+        # brand 特征升维
+        # 逐元素相乘
+        # len(brand_list)*2000*2048
+        # w_aspects = torch.mul(
+        #     brand_weights.view(brand_list.shape[0], self.num_aspects, 1).expand(brand_list.shape[0], self.num_aspects,
+        #                                                                         self.aspects_embeddings.shape[
+        #                                                                             1]),
+        #     self.aspects_embeddings.view(1, self.num_aspects, self.aspects_embeddings.shape[1]).expand(
+        #         brand_list.shape[0], self.num_aspects, self.aspects_embeddings.shape[1]))
+        # w_aspects = self.dropout(w_aspects)
+        # return w_aspects
+
+        # 不进行升维
+        return brand_weights
+
+
+# MFB用于对视觉、语言特征进行融合
+class MFB(nn.Module):
+    """
+    Multi-modal Factorized Bi-linear Pooling Fusion.
+    """
+
+    def __init__(self, opt):
+        super(MFB, self).__init__()
+        self.opt = opt
+        self.config = {"MFB_K": 5, "MFB_O": self.opt.common_embedding_size, "DROP_OUT": 0.1}
+        self.proj_i = nn.Linear(self.opt.visual_mapping_size[1], self.config["MFB_K"] * self.config["MFB_O"])
+        self.proj_q = nn.Linear(self.opt.text_mapping_size[1], self.config["MFB_K"] * self.config["MFB_O"])
+        self.dropout = nn.Dropout(self.config["DROP_OUT"])
+        self.pool = nn.AvgPool1d(kernel_size=self.config["MFB_K"], stride=self.config["MFB_K"])
+        self.init_weights()
+
+    def init_weights(self):
+        nn.init.xavier_uniform_(self.proj_i.weight)
+        nn.init.xavier_uniform_(self.proj_q.weight)
+
+    def forward(self, img_feat, txt_feat, exp_in=1):
+        '''
+            img_feat.size() -> (N, C, img_feat_size)
+            ques_feat.size() -> (N, C, ques_feat_size)
+            z.size() -> (N, MFB_O)
+            exp_out.size() -> (N, C, K*O)
+        '''
+        batch_size = img_feat.shape[0]
+        img_feat = self.proj_i(img_feat).view(batch_size, 1, -1)  # (N, C, K*O)
+        txt_feat = self.proj_q(txt_feat).view(batch_size, 1, -1)  # (N, C, K*O)
+
+        # Hadmard product
+        exp_out = img_feat * txt_feat  # (N, C, K*O)
+        exp_out = self.dropout(exp_out)  # (N, C, K*O)
+        z1 = self.pool(exp_out) * self.config['MFB_K']  # (N, C, O)
+        z1 = z1.squeeze()
+        # z = torch.sqrt(F.relu(z1)) - torch.sqrt(F.relu(-z1))
+        # z = F.normalize(z.view(batch_size, -1))               # (N, C*O)
+        # z = z.view(batch_size, -1, self.config['MFB_O'])      # (N, C, O)
+        return z1
+
+
+# 视觉模态和语言模态的特征融合方式
+# 可以是全连接融合，只使用视觉特征，只使用语言特征
+class Fuse_Visual_Text(nn.Module):
+    def __init__(self, opt):
+        super(Fuse_Visual_Text, self).__init__()
+        self.opt = opt
+        # final embedding dim in common space
+        self.common_embedding_size = opt.common_embedding_size
+        # visual feature dim after visual_net
+        self.visual_mapping_size = opt.visual_mapping_size[1]
+        # text feature dim after text_net
+        self.text_mapping_size = opt.text_mapping_size[1]
+        # fusion style
+        # 根据使用的是单模态或者多模态
+        if opt.single_modal_visual:
+            self.fc = nn.Linear(self.visual_mapping_size, self.common_embedding_size)
+        elif opt.single_modal_text:
+            self.fc = nn.Linear(self.text_mapping_size, self.common_embedding_size)
+        else:
+            self.fc = nn.Linear(self.text_mapping_size + self.visual_mapping_size, self.common_embedding_size)
+        self.init_weights()
+
+    def forward(self, visual_embs, text_embs):
+        # control the style of fusion
+        # single-modal only
+        if self.opt.single_modal_visual:
+            fusion_vt = self.fc(visual_embs)
+        elif self.opt.single_modal_text:
+            fusion_vt = self.fc(text_embs)
+        else:
+            fusion_vt = torch.cat((visual_embs, text_embs), 1)
+            fusion_vt = self.fc(fusion_vt)
+        return fusion_vt
+
+    def init_weights(self):
+        """Xavier initialization for the fully connected layer
+        """
+        xavier_init_fc(self.fc)
+
+
+# 我们的模型结构定义
+class Dual_Encoding(BaseModel):
+    """
+    dual encoding network
+    """
+
+    def __init__(self, opt):
+        # Build Models
+        self.grad_clip = opt.grad_clip
+        # brand net
+        self.brand_encoding = BrandAspects(opt)
+        # visual net
+        self.vid_encoding = Video_multilevel_encoding(opt)
+        # text net
+        self.text_encoding = None
+        self.text_net = opt.text_net
+        if self.text_net == 'bi-gru':
+            self.text_encoding = Text_multilevel_encoding(opt)
+        elif self.text_net == 'transformers':
+            self.text_encoding = Text_transformers_encoding(opt)
+        # fusion net
+        self.fusion_style = opt.fusion_style
+        if self.fusion_style == 'fc':
+            self.fusion_encoding = Fuse_Visual_Text(opt)
+        elif self.fusion_style == 'mfb':
+            self.fusion_encoding = MFB(opt)
+
+        # self.lab_criterion = LabLoss()
+
+        # Loss and Optimizer
+        if opt.loss_fun in ['mrl', 'eet']:
+            self.criterion = TripletLoss(margin=opt.margin,
+                                         measure=opt.measure,
+                                         max_violation=opt.max_violation,
+                                         cost_style=opt.cost_style,
+                                         direction=opt.direction,
+                                         loss_fun=opt.loss_fun)
+        self.vid_encoding.to(device)
+        self.text_encoding.to(device)
+        self.brand_encoding.to(device)
+        self.criterion.to(device)
+        self.fusion_encoding.to(device)
+        # self.lab_criterion.to(device)
+        if torch.cuda.is_available():
+            cudnn.benchmark = True
+
+        params1 = list(self.vid_encoding.parameters())
+        params1 += list(self.text_encoding.parameters())
+        # add new params here.
+        params1 += list(self.brand_encoding.parameters())
+        params1 += list(self.fusion_encoding.parameters())
+        self.params1 = params1
+
+        # optimize brand net
+        # params2 = list(self.brand_encoding.parameters())
+
+        if opt.optimizer == 'adam':
+            self.optimizer = torch.optim.Adam(params1, lr=opt.learning_rate)
+        elif opt.optimizer == 'rmsprop':
+            self.optimizer = torch.optim.RMSprop(params1, lr=opt.learning_rate)
+
+        # self.brand_optimizer = torch.optim.Adadelta(params2, lr=1)
+        self.Eiters = 0
+
+    def embedd_lab(self, brand_ids):
+        brand_ids = brand_ids.to(device)
+        brand_embs = self.brand_encoding(brand_ids)
+        brand_embs = l2norm(brand_embs.mean(1))
+        return brand_embs
+
+    def forward_emb(self, brand_ids, videos, text, *args):
+        """Compute the brands, video_frames and caption embeddings
+        """
+        # deal with Brands
+        brand_ids = brand_ids.to(device)
+        # brand embeddings
+        brand_embs = self.brand_encoding(brand_ids)
+        # w_aspects = nn.parallel.data_parallel(self.brand_encoding, inputs=brand_ids, device_ids=[0, 1, 2, 3, 4])
+        # brand_embs = w_aspects.permute((1, 0, 2)).mean(0)
+
+        # deal with videos and texts
+        # video_frames data
+        # frames:batchsize * 最大帧数 * 2048
+        # mean_original:batchsize * 2048
+        # video_lengths:视频帧数
+        # vidoes_mask:mask
+        frames, mean_origin, video_lengths, vidoes_mask = videos
+        frames = frames.to(device)
+        mean_origin = mean_origin.to(device)
+        vidoes_mask = vidoes_mask.to(device)
+
+        videos_data = (frames, mean_origin, video_lengths, vidoes_mask)
+
+        # text data
+        text_data = None
+        if self.text_net == 'bi-gru':
+            # caption:batchsize*最长句子,cap_bows:batchsize*7807，句子长度，mask
+            captions, cap_bows, lengths, cap_masks = text
+            if captions is not None:
+                # captions = Variable(captions, volatile=volatile)
+                captions = captions.to(device)
+
+            if cap_bows is not None:
+                # cap_bows = Variable(cap_bows)
+                cap_bows = cap_bows.to(device)
+
+            if cap_masks is not None:
+                # cap_masks = Variable(cap_masks)
+                cap_masks = cap_masks.to(device)
+            text_data = (captions, cap_bows, lengths, cap_masks)
+
+        elif self.text_net == 'transformers':
+            cap_bows, tokens, type_ids, masks = text
+            if cap_bows is not None:
+                cap_bows = cap_bows.to(device)
+            if tokens is not None:
+                tokens = tokens.to(device)
+            if type_ids is not None:
+                type_ids = type_ids.to(device)
+            if masks is not None:
+                masks = masks.to(device)
+            text_data = (cap_bows, tokens, type_ids, masks)
+
+        # obtain visual/text embeddings
+        vid_emb = self.vid_encoding(videos_data)
+        cap_emb = self.text_encoding(text_data)
+        # cap_emb = nn.parallel.data_parallel(self.text_encoding, inputs=text_data, device_ids=[0, 1, 2, 3, 4])
+        # vid_emb = nn.parallel.data_parallel(self.vid_encoding, inputs=videos_data, device_ids=[0, 1, 2, 3, 4])
+
+        # fuse visual and text features
+        # post_embs = torch.cat((vid_emb, cap_emb), 1)
+        post_embs = self.fusion_encoding(vid_emb, cap_emb)
+
+        # post represented as single modal
+        # post_embs = cap_emb
+        # print(vid_emb.device)
+        # print(brand_embs.device)
+        # print(post_embs.device)
+        return brand_embs, post_embs
+
+    def embed_vis(self, vis_data, volatile=True):
+        # video_frames data
+        frames, mean_origin, video_lengths, vidoes_mask = vis_data
+        # frames = Variable(frames, volatile=volatile)
+        frames = frames.to(device)
+        mean_origin = mean_origin.to(device)
+        vidoes_mask = vidoes_mask.to(device)
+
+        vis_data = (frames, mean_origin, video_lengths, vidoes_mask)
+
+        return self.vid_encoding(vis_data)
+
+    def embed_txt(self, txt_data, volatile=True):
+        # text data
+        captions, cap_bows, lengths, cap_masks = txt_data
+        if captions is not None:
+            # captions = Variable(captions, volatile=volatile)
+            captions = captions.to(device)
+
+        if cap_bows is not None:
+            # cap_bows = Variable(cap_bows,volatile=volatile)
+            cap_bows = cap_bows.to(device)
+
+        if cap_masks is not None:
+            # cap_masks = Variable(cap_masks,volatile=volatile)
+            cap_masks = cap_masks.to(device)
+        txt_data = (captions, cap_bows, lengths, cap_masks)
+
+        return self.text_encoding(txt_data)
+
+
+NAME_TO_MODELS = {'dual_encoding': Dual_Encoding}
+
+
+def get_model(name):
+    assert name in NAME_TO_MODELS, '%s not supported.' % name
+    return NAME_TO_MODELS[name]

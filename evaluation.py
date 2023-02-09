@@ -76,7 +76,7 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=False
 
             # preserve the embeddings by copying from gpu and converting to numpy
             # brand_embs[idxs] = brand_emb.data.cpu().numpy().copy()
-            post_embs[idxs] = post_emb.data.cpu().numpy().copy()
+            post_embs[np.array(idxs)] = post_emb.data.cpu().numpy().copy()
 
             for j, idx in enumerate(idxs):
                 caption_ids[idx] = cap_ids[j]
@@ -114,9 +114,12 @@ def test_post_ranking(brand_num, metric, model, post_embs, brands):
     aspect_model = model.brand_encoding.eval()
     # total brands are here
     brand_list = [i for i in range(brand_num)]
+    brand_ = torch.LongTensor(brand_list)
 
-    aspect_model = aspect_model.to(device)
-    brand_ = torch.LongTensor(brand_list).to(device)
+    if torch.cuda.is_available():
+        aspect_model = aspect_model.cuda()
+        brand_ = brand_.cuda()
+
     aspects = aspect_model(brand_)
     # brand_num*2048
     # aspects = aspects.permute((1, 0, 2)).mean(0)

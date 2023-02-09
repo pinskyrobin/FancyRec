@@ -1,4 +1,4 @@
-rootpath=/group_homes/public_cluster/home/u190110105/insCar # experiments on XXXXX dataset 调整前四行确定实验用的数据集
+rootpath=/home/u190110105/insCar # experiments on XXXXX dataset 调整前四行确定实验用的数据集
 trainCollection=insCartrain
 valCollection=insCarval
 testCollection=insCartest
@@ -30,9 +30,10 @@ fusion_style=fc
 # Generate video_frames frame info
 # ./do_get_frameInfo.sh $trainCollection $visual_feature
 
+cd FGMCD/
 # training
-gpu=0
-CUDA_VISIBLE_DEVICES=$gpu python trainer.py $trainCollection $valCollection $testCollection \
+gpu=-1
+CUDA_VISIBLE_DEVICES=$gpu ../anaconda3/bin/python3 trainer.py $trainCollection $valCollection $testCollection \
                                             --rootpath $rootpath \
                                             --workers 8 \
                                             --brand_num 51 \

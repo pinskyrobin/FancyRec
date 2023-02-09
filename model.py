@@ -139,7 +139,9 @@ class MultiHeadSelfAttention(nn.Module):
         atten_1 = self.w_2(self.tanh(self.w_1(x)))
         atten_1 = torch.mean(atten_1, dim=-1, keepdim=True)
 
-        weight = torch.zeros_like(atten_1).to(device)
+        weight = torch.zeros_like(atten_1)
+        if torch.cuda.is_available():
+            weight = weight.cuda()
         for i, batch in enumerate(atten_1):
             weight[i, :mask[i]] = self.softmax_0(batch[:mask[i]])
 
@@ -200,7 +202,9 @@ class Video_multilevel_encoding(nn.Module):
         # print("visual feature after bi-gru:", gru_init_out.size())
         mean_gru = torch.zeros(
             gru_init_out.size(0),
-            self.rnn_output_size).to(device)
+            self.rnn_output_size)
+        if torch.cuda.is_available():
+            mean_gru = mean_gru.cuda()
         for i, batch in enumerate(gru_init_out):
             mean_gru[i] = torch.mean(batch[:lengths[i]], 0)
         gru_out = mean_gru
@@ -316,7 +320,9 @@ class Text_transformers_encoding(nn.Module):
 
         # OUTPUT of TRANSFORMERS (without intermediate states)
         last_hidden = outputs[0]
-        tf_out = torch.zeros(len(tokens), self.hidden_size).to(device)
+        tf_out = torch.zeros(len(tokens), self.hidden_size)
+        if torch.cuda.is_available():
+            tf_out = tf_out.cuda()
         for i, batch in enumerate(last_hidden):
             tf_out[i] = torch.mean(batch[:int(torch.sum(mask[i]))], 0)
 
@@ -410,7 +416,9 @@ class Text_multilevel_encoding(nn.Module):
 
         gru_init_out = padded[0]
         # print(gru_init_out.size())  e.g torch.Size([128,20,1024])
-        gru_out = torch.zeros(padded[0].size(0), self.rnn_output_size).to(device)
+        gru_out = torch.zeros(padded[0].size(0), self.rnn_output_size)
+        if torch.cuda.is_available():
+            gru_out = gru_out.cuda()
         for i, batch in enumerate(padded[0]):
             gru_out[i] = torch.mean(batch[:lengths[i]], 0)
         gru_out = self.dropout(gru_out)
@@ -708,13 +716,13 @@ class Dual_Encoding(BaseModel):
                                          cost_style=opt.cost_style,
                                          direction=opt.direction,
                                          loss_fun=opt.loss_fun)
-        self.vid_encoding.to(device)
-        self.text_encoding.to(device)
-        self.brand_encoding.to(device)
-        self.criterion.to(device)
-        self.fusion_encoding.to(device)
-        # self.lab_criterion.to(device)
         if torch.cuda.is_available():
+            self.vid_encoding.cuda()
+            self.text_encoding.cuda()
+            self.brand_encoding.cuda()
+            self.criterion.cuda()
+            self.fusion_encoding.cuda()
+            # self.lab_criterion.cuda()
             cudnn.benchmark = True
 
         params1 = list(self.vid_encoding.parameters())
@@ -736,7 +744,8 @@ class Dual_Encoding(BaseModel):
         self.Eiters = 0
 
     def embedd_lab(self, brand_ids):
-        brand_ids = brand_ids.to(device)
+        if torch.cuda.is_available():
+            brand_ids = brand_ids.cuda()
         brand_embs = self.brand_encoding(brand_ids)
         brand_embs = l2norm(brand_embs.mean(1))
         return brand_embs
@@ -745,7 +754,8 @@ class Dual_Encoding(BaseModel):
         """Compute the brands, video_frames and caption embeddings
         """
         # deal with Brands
-        brand_ids = brand_ids.to(device)
+        if torch.cuda.is_available():
+            brand_ids = brand_ids.cuda()
         # brand embeddings
         brand_embs = self.brand_encoding(brand_ids)
         # w_aspects = nn.parallel.data_parallel(self.brand_encoding, inputs=brand_ids, device_ids=[0, 1, 2, 3, 4])
@@ -758,9 +768,10 @@ class Dual_Encoding(BaseModel):
         # video_lengths:视频帧数
         # vidoes_mask:mask
         frames, mean_origin, video_lengths, vidoes_mask = videos
-        frames = frames.to(device)
-        mean_origin = mean_origin.to(device)
-        vidoes_mask = vidoes_mask.to(device)
+        if torch.cuda.is_available():
+            frames = frames.cuda()
+            mean_origin = mean_origin.cuda()
+            vidoes_mask = vidoes_mask.cuda()
 
         videos_data = (frames, mean_origin, video_lengths, vidoes_mask)
 
@@ -771,27 +782,34 @@ class Dual_Encoding(BaseModel):
             captions, cap_bows, lengths, cap_masks = text
             if captions is not None:
                 # captions = Variable(captions, volatile=volatile)
-                captions = captions.to(device)
+                if torch.cuda.is_available():
+                    captions = captions.cuda()
 
             if cap_bows is not None:
                 # cap_bows = Variable(cap_bows)
-                cap_bows = cap_bows.to(device)
+                if torch.cuda.is_available():
+                    cap_bows = cap_bows.cuda()
 
             if cap_masks is not None:
                 # cap_masks = Variable(cap_masks)
-                cap_masks = cap_masks.to(device)
+                if torch.cuda.is_available():
+                    cap_masks = cap_masks.cuda()
             text_data = (captions, cap_bows, lengths, cap_masks)
 
         elif self.text_net == 'transformers':
             cap_bows, tokens, type_ids, masks = text
             if cap_bows is not None:
-                cap_bows = cap_bows.to(device)
+                if torch.cuda.is_available():
+                    cap_bows = cap_bows.cuda()
             if tokens is not None:
-                tokens = tokens.to(device)
+                if torch.cuda.is_available():
+                    tokens = tokens.cuda()
             if type_ids is not None:
-                type_ids = type_ids.to(device)
+                if torch.cuda.is_available():
+                    type_ids = type_ids.cuda()
             if masks is not None:
-                masks = masks.to(device)
+                if torch.cuda.is_available():
+                    masks = masks.cuda()
             text_data = (cap_bows, tokens, type_ids, masks)
 
         # obtain visual/text embeddings
@@ -815,9 +833,10 @@ class Dual_Encoding(BaseModel):
         # video_frames data
         frames, mean_origin, video_lengths, vidoes_mask = vis_data
         # frames = Variable(frames, volatile=volatile)
-        frames = frames.to(device)
-        mean_origin = mean_origin.to(device)
-        vidoes_mask = vidoes_mask.to(device)
+        if torch.cuda.is_available():
+            frames = frames.cuda()
+            mean_origin = mean_origin.cuda()
+            vidoes_mask = vidoes_mask.cuda()
 
         vis_data = (frames, mean_origin, video_lengths, vidoes_mask)
 
@@ -828,15 +847,18 @@ class Dual_Encoding(BaseModel):
         captions, cap_bows, lengths, cap_masks = txt_data
         if captions is not None:
             # captions = Variable(captions, volatile=volatile)
-            captions = captions.to(device)
+            if torch.cuda.is_available():
+                captions = captions.cuda()
 
         if cap_bows is not None:
             # cap_bows = Variable(cap_bows,volatile=volatile)
-            cap_bows = cap_bows.to(device)
+            if torch.cuda.is_available():
+                cap_bows = cap_bows.cuda()
 
         if cap_masks is not None:
             # cap_masks = Variable(cap_masks,volatile=volatile)
-            cap_masks = cap_masks.to(device)
+            if torch.cuda.is_available():
+                cap_masks = cap_masks.cuda()
         txt_data = (captions, cap_bows, lengths, cap_masks)
 
         return self.text_encoding(txt_data)

@@ -57,7 +57,7 @@ def parse_args():
     parser.add_argument('--measure', type=str, default='cosine', help='measure method. (default: cosine)')
     parser.add_argument('--dropout', default=0.2, type=float, help='dropout rate (default: 0.2)')
     # brand
-    parser.add_argument('--brand_num', type=int, default=51, help='total brand numbers. default:51')
+    parser.add_argument('--brand_num', type=int, default=52, help='total brand numbers. default:51')
     # text-side multi-level encoding
     parser.add_argument('--vocab', type=str, default='word_vocab_5', help='word vocabulary. (default: word_vocab_5)')
     parser.add_argument('--word_dim', type=int, default=500, help='word embedding dimension')

@@ -51,10 +51,13 @@ class LabLoss(nn.Module):
         # print(s)
         mask = torch.eye(s.size(0)) > .5
         I = mask
-        I = I.to(device)
+        if torch.cuda.is_available():
+            I = I.cuda()
         s.masked_fill_(I, 0)
         # print(s)
-        loss_lab = (torch.sum(torch.exp(s))-s.size(0)).to(device)
+        loss_lab = (torch.sum(torch.exp(s))-s.size(0))
+        if torch.cuda.is_available():
+            loss_lab = loss_lab.cuda()
         return loss_lab/s.size(0)
 
 # 跨模态检索用的tripletloss
@@ -136,7 +139,8 @@ class TripletLoss(nn.Module):
                     if brand_ids[j] == brand_ids[i]:
                         mask[i][j] = 1
             mask = mask > 0.5
-            mask = mask.to(device)
+            if torch.cuda.is_available():
+                mask = mask.cuda()
             cost_b = cost_b.masked_fill_(mask, 0)
         # # 每列的值与对角线值的关系
         # if self.direction in ['p2b', 'all']:
@@ -157,9 +161,11 @@ class TripletLoss(nn.Module):
         #         cost_p = cost_p.max(1)[0]
         #
         if cost_b is None:
-            cost_b = torch.zeros(1).to(device)
+            cost_b = torch.zeros(1)
+            if torch.cuda.is_available():
+                cost_b = cost_b.cuda()
         # if cost_p is None:
-        #     cost_p = torch.zeros(1).to(device)
+        #     cost_p = torch.zeros(1).cuda(
         #
         if self.cost_style == 'sum':
             total_loss = cost_b.sum()

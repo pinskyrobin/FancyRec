@@ -2,8 +2,8 @@ import os
 import logging
 import torch
 
-ROOT_PATH = os.path.join(os.environ['HOME'], 'insCar')
-device = torch.device("cuda:0")
+ROOT_PATH = "/home/u190110105/insCar"
+device = torch.device("mps")
 
 logger = logging.getLogger(__file__)
 logging.basicConfig(

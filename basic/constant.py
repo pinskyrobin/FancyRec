@@ -3,7 +3,9 @@ import logging
 import torch
 
 ROOT_PATH = "/home/u190110105/insCar"
-device = torch.device("mps")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# device = torch.device("mps")
+# device = torch.device("cpu")
 
 logger = logging.getLogger(__file__)
 logging.basicConfig(

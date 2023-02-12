@@ -1,21 +1,16 @@
 # -*- coding: utf-8 -*
 from __future__ import print_function
-import os
-import pickle
 
 import numpy
 import time
 import numpy as np
 from scipy.spatial import distance
 import torch
-from torch.autograd import Variable
+
+from basic.constant import device
 from basic.metric import getScorer
 from basic.util import AverageMeter, LogCollector
-from sklearn.metrics.pairwise import cosine_similarity
-from model import BrandAspects
-import tqdm
 from ndcg import ndcg_at_k
-from basic.constant import device
 
 
 # l2正则化
@@ -28,6 +23,7 @@ def l2norm(X):
 
 # 计算品牌表示和posts表示的相似度分数
 def cal_sim(brands_emb, posts_emb, measure='cosine'):
+    result = None
     if measure == 'cosine':
         brands_emb = l2norm(brands_emb)
         posts_emb = l2norm(posts_emb)
@@ -50,7 +46,11 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=False
     val_logger = LogCollector()
 
     # switch to evaluate mode
-    model.val_start()
+    # model.vid_encoding.eval()
+    # model.text_encoding.eval()
+    # model.brand_encoding.eval()
+    # model.fusion_encoding.eval()
+    model.eval()
 
     end = time.time()
 
@@ -67,7 +67,7 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=False
             brands.extend(brand_ids)
             # compute the embeddings
             # 验证阶段不需要计算梯度
-            _, post_emb = model.forward_emb(brand_ids, videos, captions)
+            _, post_emb = model(brand_ids, videos, captions)
 
             # initialize the numpy arrays given the size of the embeddings
             if post_embs is None:
@@ -103,26 +103,26 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=False
 
 # 计算各个评价指标
 def test_post_ranking(brand_num, metric, model, post_embs, brands):
-    '''
-    :param opt:
+    """
     :param metric:
     :param model:
     :param post_embs: all posts embeddings in test set
     :param brands: all (testing set)posts' brand information
     :return:
-    '''
-    aspect_model = model.brand_encoding.eval()
+    """
+    # aspect_model = model.brand_encoding.eval()
+    aspect_model = model.eval()
     # total brands are here
     brand_list = [i for i in range(brand_num)]
-    brand_ = torch.LongTensor(brand_list)
+    brand_ = torch.LongTensor(brand_list).to(device)
 
-    if torch.cuda.is_available():
-        aspect_model = aspect_model.cuda()
-        brand_ = brand_.cuda()
+    aspect_model.to(device)
+    brand_.to(device)
 
-    aspects = aspect_model(brand_)
+    # aspects = aspect_model(brand_)
+    aspects, _ = aspect_model(brand_)
     # brand_num*2048
-    # aspects = aspects.permute((1, 0, 2)).mean(0)
+    aspects = aspects.permute((1, 0, 2)).mean(0)
     # compute scores between brand and post
     aspects = aspects.data.cpu().numpy().copy()
     # shape: brand_num * len(test_set)
@@ -165,11 +165,9 @@ def test_post_ranking(brand_num, metric, model, post_embs, brands):
                 # exit(0)
                 d = scores[b]
                 inds = np.argsort(-d)
-                # print(inds)
                 brand_idx = brands_tmp[inds]
                 rank = np.where(brand_idx == b)[0][0]
                 ranks[b] = rank
-                # print('brand {}, MedR {}, AUC {}, ndcg_10 {} ndcg_50 {}'.format(b, queries[-1][0], queries[-1][1], queries[-1][2], queries[-1][3]))
 
         r1 = 100.0 * len(np.where(ranks < 1)[0]) / len(ranks)
         r5 = 100.0 * len(np.where(ranks < 5)[0]) / len(ranks)

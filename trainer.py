@@ -6,33 +6,29 @@ import sys
 import time
 import shutil
 import json
-import numpy as np
 
 import torch
-import tqdm
+from torch.nn.utils import clip_grad_norm_
 
 import evaluation
 import util.data_provider as data
-from basic.imgbigfile import ImageBigFile
-from util.vocab import Vocabulary
+from util.vocab import Vocabulary  # pickle反序列化用到
+from loss import TripletLoss, LabLoss
 from util.text2vec import get_text_encoder
-from model import get_model, get_we_parameter, BrandAspects
+# from model import FGMCD, get_we_parameter
 
 import logging
 import tensorboard_logger as tb_logger
 
 import argparse
 
-from basic.constant import ROOT_PATH
-from basic.wordbigfile import WordBigFile
+from basic.constant import ROOT_PATH, device
 from basic.imgbigfile import ImageBigFile
 from basic.common import makedirsforfile, checkToSkip
 from basic.util import read_dict, AverageMeter, LogCollector
 from basic.generic_utils import Progbar
 from evaluation import test_post_ranking
-from ndcg import ndcg_at_k
-import torch.nn as nn
-from basic.constant import device
+from FGMCD import FGMCD, get_we_parameter
 
 INFO = __file__
 
@@ -114,7 +110,7 @@ def parse_args():
     parser.add_argument('--workers', default=0, type=int, help='Number of data loader workers.')
     parser.add_argument('--postfix', default='runs_0', help='Path to save the model and Tensorboard log.')
     parser.add_argument('--log_step', default=10, type=int, help='Number of steps to print and record the log.')
-    parser.add_argument('--cv_name', default='dinner_project', type=str, help='')
+    parser.add_argument('--cv_name', default='FGMCD', type=str, help='')
 
     args = parser.parse_args()
     return args
@@ -122,7 +118,7 @@ def parse_args():
 
 def main():
     opt = parse_args()
-    print(json.dumps(vars(opt), indent=2))  # 输出所有参数
+    print(json.dumps(vars(opt), indent=2))
 
     rootpath = opt.rootpath
     trainCollection = opt.trainCollection
@@ -134,11 +130,12 @@ def main():
         assert opt.text_norm is True
         assert opt.visual_norm is True
 
-    # 如果concate方式是reduced 标记下具体是哪一种
+    # mark reduce method if concate=reduced
     reduced = ""
     if opt.concate == "reduced":
         reduced = "2_3"
     print("max_violation", opt.max_violation)
+
     # checkpoint path
     model_info = '%s_concate_%s_dp_%.1f_measure_%s' % (opt.model, opt.concate + reduced, opt.dropout, opt.measure)
     # text-side multi-level encoding info
@@ -155,6 +152,7 @@ def main():
                 (opt.loss_fun, opt.margin, opt.direction, opt.max_violation, opt.cost_style)
     optimizer_info = 'optimizer_%s_lr_%s_decay_%.2f_grad_clip_%.1f_val_metric_%s' % \
                      (opt.optimizer, opt.learning_rate, opt.lr_decay_rate, opt.grad_clip, opt.metric)
+
     # ==================================================
     # 根据使用模态的不同 相应地修改log的保存位置
     if opt.single_modal_visual:
@@ -165,9 +163,8 @@ def main():
         modalities = "visual_plus_text"
     opt.logger_name = os.path.join(rootpath, trainCollection, opt.cv_name, valCollection, model_info, text_encode_info,
                                    visual_encode_info, mapping_info, loss_info, optimizer_info, opt.postfix, modalities)
-    # print(opt.logger_name)
 
-    # 检查一下有没有这个文件 如果存在且overwrite为0 将直接退出
+    # exit if file exists and overwrite=0
     if checkToSkip(os.path.join(opt.logger_name, 'model_best.pth.tar'), opt.overwrite):
         sys.exit(0)
     if checkToSkip(os.path.join(opt.logger_name, 'val_metric.txt'), opt.overwrite):
@@ -176,17 +173,17 @@ def main():
     logging.basicConfig(format='%(asctime)s %(message)s', level=logging.INFO)
     tb_logger.configure(opt.logger_name, flush_secs=5)
 
-    # 得到kernel的大小
+    # get kernel size
     # text-kernel [2,3,4]
     opt.text_kernel_sizes = list(map(int, opt.text_kernel_sizes.split('-')))
     # visual-kernel [2,3,4,5]
     opt.visual_kernel_sizes = list(map(int, opt.visual_kernel_sizes.split('-')))
-    # collections: trian, val
+    # collections: train, val
     collections = {'train': trainCollection, 'val': valCollection, 'test': testCollection}
     cap_file = {'train': '%s.caption.txt' % trainCollection,
                 'val': '%s.caption.txt' % valCollection,
                 'test': '%s.caption.txt' % testCollection}
-    # caption得到train和val的caption
+    # get train&val caption
     caption_files = {x: os.path.join(rootpath, collections[x], 'TextData', cap_file[x])
                      for x in collections}
     # Load visual features
@@ -195,28 +192,25 @@ def main():
                        for x in collections}
     img_feat_path = {x: os.path.join(rootpath, collections[x], 'FeatureData', opt.img_feature)
                      for x in collections}
-    # 获得视频特征的一个包装类
+    # wrap video features
     video_feats = {x: ImageBigFile(video_feat_path[x]) for x in video_feat_path}
-    # 获得图像特征的一个包装类
+    # wrap image features
     img_feats = {x: ImageBigFile(img_feat_path[x]) for x in img_feat_path}
-
-    opt.visual_feat_dim = video_feats['train'].ndims  # 每个图片(帧)的被处理成维度2048
+    # get video feature dimension(2048)
+    opt.visual_feat_dim = video_feats['train'].ndims
 
     # set bow vocabulary and encoding
     bow_vocab_file = os.path.join(rootpath, opt.trainCollection, 'TextData', 'vocabulary', 'bow', opt.vocab + '.pkl')
     bow_vocab = pickle.load(open(bow_vocab_file, 'rb'))
-    # 传入一个词典包装器对象
+    # wrap bow encoding
     bow2vec = get_text_encoder('bow')(bow_vocab)
-    # print(bow2vec)
     opt.bow_vocab_size = len(bow_vocab)
-    # print(len(bow_vocab))
     print("bow_vocab_size", len(bow_vocab))  # 4318
 
     # set rnn vocabulary
     rnn_vocab_file = os.path.join(rootpath, opt.trainCollection, 'TextData', 'vocabulary', 'rnn', opt.vocab + '.pkl')
     # Vocabulary object
     rnn_vocab = pickle.load(open(rnn_vocab_file, 'rb'))
-    # print(rnn_vocab)
     opt.vocab_size = len(rnn_vocab)
     # print(len(rnn_vocab)) 7811
 
@@ -246,6 +240,7 @@ def main():
         # 最终concat得到的视觉特征dim
         opt.visual_mapping_size[0] = opt.visual_feat_dim * 2 + opt.visual_rnn_size * 2 + \
                                      opt.visual_kernel_num * len(opt.visual_kernel_sizes)
+
     # 如果是reduced的话 这里设置投影矩阵的维度要复杂一些
     # 因为跟具体的reduced方式有关, reduced可以是以下这几种：
     # level 1
@@ -290,7 +285,8 @@ def main():
                                          video2frames=video2frames)
 
     # Construct the model
-    model = get_model(opt.model)(opt)
+    model = FGMCD(opt).to(device)
+
     # parallel
     # model = torch.nn.DataParallel(model, device_ids=[0, 1, 2, 3])
     # model = model.module
@@ -315,7 +311,7 @@ def main():
             model.Eiters = checkpoint['Eiters']
             print("=> loaded checkpoint '{}' (epoch {}, best_rsum {})"
                   .format(opt.resume, start_epoch, best_sum))
-            validate(opt, data_loaders['val'], model, measure=opt.measure)
+            validate(opt, data_loaders['val'], model)
         else:
             print("=> no checkpoint found at '{}'".format(opt.resume))
 
@@ -324,7 +320,6 @@ def main():
     val_auc = []
     test_auc = []
     for epoch in range(opt.num_epochs):
-        print('Epoch[{0} / {1}] LR: {2}'.format(epoch, opt.num_epochs, get_learning_rate(model.optimizer)[0]))
         # train for one epoch
         train_loss = train(opt, data_loaders['train'], model, epoch)
         total_loss.extend(train_loss)
@@ -333,7 +328,8 @@ def main():
         # print('==========================================================')
         # print("===============Validation Phase===========================")
         # print("==========================================================")
-        # sum, AUC, NDCG_10, NDCG_50, medR, meanR, r1, r5, r10 = validate(opt, data_loaders['val'], model, measure=opt.measure)
+        # sum, AUC, NDCG_10, NDCG_50, medR, meanR, r1, r5, r10 = \
+        # validate(opt, data_loaders['val'], model, measure=opt.measure)
         # val_auc.append((AUC, NDCG_10, NDCG_50))
 
         # remember best R@ sum and save checkpoint
@@ -352,8 +348,7 @@ def main():
         print('==========================================================')
         print("=======================Test Phase============================")
         print("==========================================================")
-        sum, AUC, NDCG_10, NDCG_50, medR, meanR, r1, r5, r10 = validate(opt, data_loaders['test'], model,
-                                                                        measure=opt.measure)
+        sum, AUC, NDCG_10, NDCG_50, medR, meanR, r1, r5, r10 = validate(opt, data_loaders['test'], model)
         test_res_str = "sum: " + str(sum) + "\nAUC: " + str(AUC) + "\nNDCG_10: " + str(NDCG_10) + "\nNDCG_50: " + str(
             NDCG_50) + "\nMedR: " + str(medR) + \
                        "\nMeanR: " + str(meanR) + "\nr1: " + str(r1) + "\nr5: " + str(r5) + "\nr10: " + str(
@@ -377,20 +372,20 @@ def main():
             best_epoch = epoch
 
         lr_counter += 1
-        decay_learning_rate(opt, model.optimizer, opt.lr_decay_rate)
+        decay_learning_rate(opt, opt.optimizer, opt.lr_decay_rate)
         # Early Stopping.
         if not is_best:
             # Early stop occurs if the validation performance does not improve in ten consecutive epochs
             no_impr_counter += 1
             if no_impr_counter > 80:
-                print('Early stopping happended.\n')
+                print('Early stopping happened.\n')
                 break
 
             # When the validation performance decreased after an epoch,
             # we divide the learning rate by 2 and continue training;
             # but we use each learning rate for at least 3 epochs.
             if lr_counter > 2:
-                decay_learning_rate(opt, model.optimizer, 0.5)
+                decay_learning_rate(opt, opt.optimizer, 0.5)
                 lr_counter = 0
         else:
             no_impr_counter = 0
@@ -411,18 +406,18 @@ def main():
     # generate evaluation shell script
     if testCollection == 'iacc.3':
         templete = ''.join(open('util/TEMPLATE_do_predict.sh').readlines())
-        striptStr = templete.replace('@@@query_sets@@@', 'tv16.avs.txt,tv17.avs.txt,tv18.avs.txt')
+        script_str = templete.replace('@@@query_sets@@@', 'tv16.avs.txt,tv17.avs.txt,tv18.avs.txt')
     else:
         templete = ''.join(open('util/TEMPLATE_do_test.sh', 'r', encoding='utf8').readlines())
-        striptStr = templete.replace('@@@n_caption@@@', str(opt.n_caption))
-    striptStr = striptStr.replace('@@@rootpath@@@', rootpath)
-    striptStr = striptStr.replace('@@@testCollection@@@', testCollection)
-    striptStr = striptStr.replace('@@@logger_name@@@', opt.logger_name)
-    striptStr = striptStr.replace('@@@overwrite@@@', str(opt.overwrite))
+        script_str = templete.replace('@@@n_caption@@@', str(opt.n_caption))
+    script_str = script_str.replace('@@@rootpath@@@', rootpath)
+    script_str = script_str.replace('@@@testCollection@@@', testCollection)
+    script_str = script_str.replace('@@@logger_name@@@', opt.logger_name)
+    script_str = script_str.replace('@@@overwrite@@@', str(opt.overwrite))
 
     # perform evaluation on test set
     runfile = 'do_test_%s_%s.sh' % (opt.model, testCollection)
-    open(runfile, 'w', encoding='utf8').write(striptStr + '\n')
+    open(runfile, 'w', encoding='utf8').write(script_str + '\n')
     os.system('chmod +x %s' % runfile)
     # os.system('./'+runfile)
 
@@ -434,23 +429,79 @@ def train(opt, train_loader, model, epoch):
     train_logger = LogCollector()
 
     # switch to train mode
-    model.train_start()
+    # TODO
+    # model.vid_encoding.train()
+    # model.text_encoding.train()
+    # model.brand_encoding.train()
+    # model.fusion_encoding.train()
+    model.train()
+
     # optimize brand-net first
     progbar = Progbar(len(train_loader.dataset))
     end = time.time()
     train_loss = []
+
+    loss_func = TripletLoss(margin=opt.margin,
+                            max_violation=opt.max_violation,
+                            cost_style=opt.cost_style,
+                            direction=opt.direction,
+                            loss_fun=opt.loss_fun).to(device)
+
+    # loss_func = LabLoss().to(device)
+
+    optimizer = None
+    if opt.optimizer == 'adam':
+        optimizer = torch.optim.Adam(model.parameters(), lr=opt.learning_rate)
+    elif opt.optimizer == 'rmsprop':
+        optimizer = torch.optim.RMSprop(model.params1, lr=opt.learning_rate)
+
+    print('Epoch[{0} / {1}] LR: {2}'.format(epoch, opt.num_epochs, get_learning_rate(optimizer)[0]))
+
     for i, train_data in enumerate(train_loader):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        # make sure train logger is used
+        brand_ids = train_data[0].to(device)
+        videos = train_data[1]
+        captions = train_data[2]
+
         model.logger = train_logger
+        model.Eiters += 1
+        model.logger.update('Eit', model.Eiters)
+        model.logger.update('lr', optimizer.param_groups[0]['lr'])
 
         # Update the model
-        b_size, loss = model.train_emb(*train_data)
-        train_loss.append(loss)
+        # TODO
+        videos, videos_origin, vis_lengths, vidoes_mask = videos
+        cap_wids, cap_bows, txt_lengths, cap_mask = captions
+        if cap_wids is not None:
+            cap_wids = cap_wids.to(device)
+        if cap_bows is not None:
+            cap_bows = cap_bows.to(device)
+        if cap_mask is not None:
+            cap_mask = cap_mask.to(device)
 
-        progbar.add(b_size, values=[('loss', loss)])
+        brand_ids = brand_ids.to(device)
+        videos = videos.to(device)
+        videos_origin = videos_origin.to(device)
+        vidoes_mask = vidoes_mask.to(device)
+
+        brand_emb, post_emb = model(brand_ids,
+                                    videos, videos_origin, vis_lengths, vidoes_mask,
+                                    cap_wids, cap_bows, txt_lengths, cap_mask)
+
+        optimizer.zero_grad()
+        loss = loss_func(brand_ids, brand_emb, post_emb)
+        # loss = loss_func(brand_emb)
+        train_loss.append(loss.item())
+        model.logger.update('Le', loss.item(), brand_emb.size(0))
+
+        loss.backward()
+        if opt.grad_clip > 0:
+            clip_grad_norm_(model.parameters(), opt.grad_clip)
+        optimizer.step()
+
+        progbar.add(post_emb.size(0), values=[('loss', loss.item())])
 
         # measure elapsed time
         batch_time.update(time.time() - end)
@@ -465,13 +516,13 @@ def train(opt, train_loader, model, epoch):
     return train_loss
 
 
-def validate(opt, val_loader, model, measure='cosine'):
+def validate(opt, val_loader, model):
     # compute the encoding for all the validation video_frames and captions
     # return brands' index and post embeddings in validation set
     brands, post_embs = evaluation.encode_data(model, val_loader, opt.log_step, logging.info)
 
-    # we load data as video_frames-sentence pairs
-    # but we only need to forward each video_frames once for evaluation
+    # we load data as video_frames-sentence pairs,
+    # but we only need to forward each video_frames once for evaluation,
     # so we get the video_frames set and mask out same videos with feature_mask
     # feature_mask = []
     # evaluate_videos = set()

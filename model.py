@@ -15,7 +15,6 @@ from loss import TripletLoss, LabLoss
 from basic.wordbigfile import WordBigFile
 from transformers import BertModel, BertTokenizer, BertConfig
 from torch.autograd import Function
-from basic.constant import device
 
 """模型具体结构说明的代码文件
 """
@@ -101,13 +100,14 @@ class MFC(nn.Module):
             xavier_init_fc(self.fc1)
 
     def forward(self, inputs):
+        features = None
 
         if self.n_fc <= 1:
             features = inputs
 
         elif self.n_fc == 2:
             features = self.fc1(inputs)
-            # batch noarmalization
+            # batch normalization
             if self.have_bn and self.have_last_bn:
                 features = self.bn_1(features)
             if self.have_dp:
@@ -150,13 +150,13 @@ class MultiHeadSelfAttention(nn.Module):
 
 
 # 视频数据多层级编码
-class Video_multilevel_encoding(nn.Module):
+class VisualEncoder(nn.Module):
     """
     Section 3.1. Video-side Multi-level Encoding
     """
 
     def __init__(self, opt):
-        super(Video_multilevel_encoding, self).__init__()
+        super(VisualEncoder, self).__init__()
 
         self.rnn_output_size = opt.visual_rnn_size * 2
         self.dropout = nn.Dropout(p=opt.dropout)
@@ -258,23 +258,21 @@ class Video_multilevel_encoding(nn.Module):
             if name in own_state:
                 new_state[name] = param
 
-        super(Video_multilevel_encoding, self).load_state_dict(new_state)
+        super(VisualEncoder, self).load_state_dict(new_state)
 
 
 # 文本数据（利用transformer进行处理）多层级编码
-class Text_transformers_encoding(nn.Module):
+class TextTransformersEncoder(nn.Module):
     """
     multi-level encoding
     process text feature with transformers
     """
 
     def __init__(self, opt):
-        super(Text_transformers_encoding, self).__init__()
+        super(TextTransformersEncoder, self).__init__()
         self.text_norm = opt.text_norm
         self.hidden_size = opt.text_transformers_hidden_size
         self.concate = opt.concate
-        # device
-        self.device = torch.device(device)
         # initial bert model
         # modify the default configuration
         self.configuration = BertConfig(num_hidden_layers=3, num_attention_heads=12)
@@ -351,14 +349,14 @@ class Text_transformers_encoding(nn.Module):
 
 
 # 文本数据（利用bi-gru处理）多层级编码
-class Text_multilevel_encoding(nn.Module):
+class TextEncoder(nn.Module):
     """
     Section 3.2. Text-side Multi-level Encoding
     process text feature with bi-gru
     """
 
     def __init__(self, opt):
-        super(Text_multilevel_encoding, self).__init__()
+        super(TextEncoder, self).__init__()
         self.text_norm = opt.text_norm
         self.word_dim = opt.word_dim
         self.we_parameter = opt.we_parameter
@@ -431,6 +429,7 @@ class Text_multilevel_encoding(nn.Module):
         con_out = self.dropout(con_out)
 
         # concatenation
+        features = None
         if self.concate == 'full':  # level 1+2+3
             features = torch.cat((org_out, gru_out, con_out), 1)  #
         elif self.concate == 'reduced':  # wmy
@@ -453,91 +452,6 @@ class Text_multilevel_encoding(nn.Module):
             features = l2norm(features)
 
         return features
-
-
-# BaseModel封装了一些基础的逻辑
-# 我们的模型会继承于basemodel
-class BaseModel(object):
-
-    def state_dict(self):
-        state_dict = [
-            self.vid_encoding.state_dict(),
-            self.text_encoding.state_dict(),
-            self.brand_encoding.state_dict(),
-            self.fusion_encoding.state_dict()]
-        return state_dict
-
-    def load_state_dict(self, state_dict):
-        self.vid_encoding.load_state_dict(state_dict[0])
-        self.text_encoding.load_state_dict(state_dict[1])
-        self.brand_encoding.load_state_dict(state_dict[2])
-        self.fusion_encoding.load_state_dict(state_dict[3])
-
-    def train_start(self):
-        """switch to train mode
-        """
-        self.vid_encoding.train()
-        self.text_encoding.train()
-        self.brand_encoding.train()
-        self.fusion_encoding.train()
-
-    def val_start(self):
-        """switch to evaluate mode
-        """
-        self.vid_encoding.eval()
-        self.text_encoding.eval()
-        self.brand_encoding.eval()
-        self.fusion_encoding.eval()
-
-    def forward_loss(self, brand_ids, brand_emb, post_emb, *agrs, **kwargs):
-        """Compute the loss given pairs of video_frames and caption embeddings
-        """
-        loss = self.criterion(brand_ids, brand_emb, post_emb)
-        # print("loss device:", loss.device) cuda
-        # loss.item() for 0.4.0, loss.data[0] for 0.3.1
-        if torch.__version__ == '0.3.1':
-            self.logger.update('Le', loss.data[0], brand_emb.size(0))
-        else:
-            self.logger.update('Le', loss.item(), brand_emb.size(0))
-        return loss
-
-    def lab_emb(self, brand_ids, *args):
-        brand_embs = self.embedd_lab(brand_ids)
-        loss_lab = self.lab_criterion(brand_embs)
-        self.brand_optimizer.zero_grad()
-        loss_lab.backward()
-        self.brand_optimizer.step()
-        return brand_embs.size(0), loss_lab.item()
-
-    def train_emb(self, brand_ids, videos, captions, *args):
-        """One training step given videos and captions.
-        """
-        self.Eiters += 1
-        self.logger.update('Eit', self.Eiters)
-        self.logger.update('lr', self.optimizer.param_groups[0]['lr'])
-
-        # compute the embeddings
-        brand_emb, post_emb = self.forward_emb(brand_ids, videos, captions, False)
-
-        # measure accuracy and record loss
-        self.optimizer.zero_grad()
-        loss = self.forward_loss(brand_ids, brand_emb, post_emb)
-        # print(loss)
-        # print(loss.item())
-
-        if torch.__version__ == '0.3.1':
-            loss_value = loss.data[0]
-        else:
-            loss_value = loss.item()
-        # compute gradient and do SGD step
-        # loss = loss.cpu()
-
-        loss.backward()
-        if self.grad_clip > 0:
-            clip_grad_norm_(self.params1, self.grad_clip)
-        self.optimizer.step()
-
-        return post_emb.size(0), loss_value
 
 
 # L1惩罚项
@@ -571,6 +485,7 @@ class BrandAspects(nn.Module):
         # brand one-hot embedding
         # 升维与否此处需要调整
         self.brand_embeddings = nn.Embedding(self.brand_num, self.common_embedding_size)
+        # self.brand_embeddings = nn.Embedding(self.brand_num, self.num_aspects)
         # 2000*2048
         self.aspects_embeddings = nn.Parameter(torch.randn(self.num_aspects, self.common_embedding_size),
                                                requires_grad=True)
@@ -581,15 +496,14 @@ class BrandAspects(nn.Module):
         brand_weights = self.brand_embeddings(brand_list)
         # L1 regularization
         # brand_weights = L1Penalty.apply(brand_weights)
-        # brand 特征升维
-        # 逐元素相乘
-        # len(brand_list)*2000*2048
+        # # brand 特征升维
+        # # 逐元素相乘
+        # # len(brand_list)*2000*2048
         # w_aspects = torch.mul(
-        #     brand_weights.view(brand_list.shape[0], self.num_aspects, 1).expand(brand_list.shape[0], self.num_aspects,
-        #                                                                         self.aspects_embeddings.shape[
-        #                                                                             1]),
-        #     self.aspects_embeddings.view(1, self.num_aspects, self.aspects_embeddings.shape[1]).expand(
-        #         brand_list.shape[0], self.num_aspects, self.aspects_embeddings.shape[1]))
+        #     brand_weights.view(brand_list.shape[0], self.num_aspects, 1)
+        #     .expand(brand_list.shape[0], self.num_aspects, self.aspects_embeddings.shape[1]),
+        #     self.aspects_embeddings.view(1, self.num_aspects, self.aspects_embeddings.shape[1])
+        #     .expand(brand_list.shape[0], self.num_aspects, self.aspects_embeddings.shape[1]))
         # w_aspects = self.dropout(w_aspects)
         # return w_aspects
 
@@ -680,25 +594,22 @@ class Fuse_Visual_Text(nn.Module):
 
 
 # 我们的模型结构定义
-class Dual_Encoding(BaseModel):
-    """
-    dual encoding network
-    """
+class FGMCD(nn.Module):
 
     def __init__(self, opt):
         # Build Models
-        self.grad_clip = opt.grad_clip
+        super(FGMCD, self).__init__()
         # brand net
         self.brand_encoding = BrandAspects(opt)
         # visual net
-        self.vid_encoding = Video_multilevel_encoding(opt)
+        self.vid_encoding = VisualEncoder(opt)
         # text net
         self.text_encoding = None
         self.text_net = opt.text_net
         if self.text_net == 'bi-gru':
-            self.text_encoding = Text_multilevel_encoding(opt)
+            self.text_encoding = TextEncoder(opt)
         elif self.text_net == 'transformers':
-            self.text_encoding = Text_transformers_encoding(opt)
+            self.text_encoding = TextTransformersEncoder(opt)
         # fusion net
         self.fusion_style = opt.fusion_style
         if self.fusion_style == 'fc':
@@ -706,80 +617,69 @@ class Dual_Encoding(BaseModel):
         elif self.fusion_style == 'mfb':
             self.fusion_encoding = MFB(opt)
 
-        # self.lab_criterion = LabLoss()
-
-        # Loss and Optimizer
-        if opt.loss_fun in ['mrl', 'eet']:
-            self.criterion = TripletLoss(margin=opt.margin,
-                                         measure=opt.measure,
-                                         max_violation=opt.max_violation,
-                                         cost_style=opt.cost_style,
-                                         direction=opt.direction,
-                                         loss_fun=opt.loss_fun)
-        if torch.cuda.is_available():
-            self.vid_encoding.cuda()
-            self.text_encoding.cuda()
-            self.brand_encoding.cuda()
-            self.criterion.cuda()
-            self.fusion_encoding.cuda()
-            # self.lab_criterion.cuda()
-            cudnn.benchmark = True
-
         params1 = list(self.vid_encoding.parameters())
         params1 += list(self.text_encoding.parameters())
-        # add new params here.
         params1 += list(self.brand_encoding.parameters())
         params1 += list(self.fusion_encoding.parameters())
         self.params1 = params1
 
-        # optimize brand net
-        # params2 = list(self.brand_encoding.parameters())
-
-        if opt.optimizer == 'adam':
-            self.optimizer = torch.optim.Adam(params1, lr=opt.learning_rate)
-        elif opt.optimizer == 'rmsprop':
-            self.optimizer = torch.optim.RMSprop(params1, lr=opt.learning_rate)
-
         # self.brand_optimizer = torch.optim.Adadelta(params2, lr=1)
         self.Eiters = 0
 
-    def embedd_lab(self, brand_ids):
+    def forward(self, brand_ids, videos, captions):
+        # extract and fuse features
+        brand_embs = self.embed_brand(brand_ids)
+        vid_emb = self.embed_vis(videos)
+        cap_emb = self.embed_txt(captions)
+        # cap_emb = nn.parallel.data_parallel(self.text_encoding, inputs=text_data, device_ids=[0, 1, 2, 3, 4])
+        # vid_emb = nn.parallel.data_parallel(self.vid_encoding, inputs=videos_data, device_ids=[0, 1, 2, 3, 4])
+
+        # post_embs = torch.cat((vid_emb, cap_emb), 1)
+        post_embs = self.fusion_encoding(vid_emb, cap_emb)
+
+        # post represented as single modal
+        # post_embs = cap_emb
+        return brand_embs, post_embs
+
+    def embed_lab(self, brand_ids):
         if torch.cuda.is_available():
             brand_ids = brand_ids.cuda()
         brand_embs = self.brand_encoding(brand_ids)
         brand_embs = l2norm(brand_embs.mean(1))
         return brand_embs
 
-    def forward_emb(self, brand_ids, videos, text, *args):
-        """Compute the brands, video_frames and caption embeddings
-        """
-        # deal with Brands
+    def embed_brand(self, brand_ids, volatile=True):
         if torch.cuda.is_available():
             brand_ids = brand_ids.cuda()
         # brand embeddings
         brand_embs = self.brand_encoding(brand_ids)
         # w_aspects = nn.parallel.data_parallel(self.brand_encoding, inputs=brand_ids, device_ids=[0, 1, 2, 3, 4])
         # brand_embs = w_aspects.permute((1, 0, 2)).mean(0)
+        return brand_embs
 
+    def embed_vis(self, vis_data, volatile=True):
         # deal with videos and texts
         # video_frames data
         # frames:batchsize * 最大帧数 * 2048
         # mean_original:batchsize * 2048
         # video_lengths:视频帧数
         # vidoes_mask:mask
-        frames, mean_origin, video_lengths, vidoes_mask = videos
+        frames, mean_origin, video_lengths, vidoes_mask = vis_data
+
         if torch.cuda.is_available():
             frames = frames.cuda()
             mean_origin = mean_origin.cuda()
             vidoes_mask = vidoes_mask.cuda()
 
-        videos_data = (frames, mean_origin, video_lengths, vidoes_mask)
+        data = (frames, mean_origin, video_lengths, vidoes_mask)
 
-        # text data
-        text_data = None
+        return self.vid_encoding(data)
+
+    def embed_txt(self, text_data, volatile=True):
+        data = None
         if self.text_net == 'bi-gru':
             # caption:batchsize*最长句子,cap_bows:batchsize*7807，句子长度，mask
-            captions, cap_bows, lengths, cap_masks = text
+            captions, cap_bows, lengths, cap_masks = text_data
             if captions is not None:
                 # captions = Variable(captions, volatile=volatile)
                 if torch.cuda.is_available():
@@ -794,10 +694,10 @@ class Dual_Encoding(BaseModel):
                 # cap_masks = Variable(cap_masks)
                 if torch.cuda.is_available():
                     cap_masks = cap_masks.cuda()
-            text_data = (captions, cap_bows, lengths, cap_masks)
+            data = (captions, cap_bows, lengths, cap_masks)
 
         elif self.text_net == 'transformers':
-            cap_bows, tokens, type_ids, masks = text
+            cap_bows, tokens, type_ids, masks = text_data
             if cap_bows is not None:
                 if torch.cuda.is_available():
                     cap_bows = cap_bows.cuda()
@@ -810,63 +710,20 @@ class Dual_Encoding(BaseModel):
             if masks is not None:
                 if torch.cuda.is_available():
                     masks = masks.cuda()
-            text_data = (cap_bows, tokens, type_ids, masks)
+            data = (cap_bows, tokens, type_ids, masks)
 
-        # obtain visual/text embeddings
-        vid_emb = self.vid_encoding(videos_data)
-        cap_emb = self.text_encoding(text_data)
-        # cap_emb = nn.parallel.data_parallel(self.text_encoding, inputs=text_data, device_ids=[0, 1, 2, 3, 4])
-        # vid_emb = nn.parallel.data_parallel(self.vid_encoding, inputs=videos_data, device_ids=[0, 1, 2, 3, 4])
+        return self.text_encoding(data)
 
-        # fuse visual and text features
-        # post_embs = torch.cat((vid_emb, cap_emb), 1)
-        post_embs = self.fusion_encoding(vid_emb, cap_emb)
+    def state_dict(self):
+        state_dict = [
+            self.vid_encoding.state_dict(),
+            self.text_encoding.state_dict(),
+            self.brand_encoding.state_dict(),
+            self.fusion_encoding.state_dict()]
+        return state_dict
 
-        # post represented as single modal
-        # post_embs = cap_emb
-        # print(vid_emb.device)
-        # print(brand_embs.device)
-        # print(post_embs.device)
-        return brand_embs, post_embs
-
-    def embed_vis(self, vis_data, volatile=True):
-        # video_frames data
-        frames, mean_origin, video_lengths, vidoes_mask = vis_data
-        # frames = Variable(frames, volatile=volatile)
-        if torch.cuda.is_available():
-            frames = frames.cuda()
-            mean_origin = mean_origin.cuda()
-            vidoes_mask = vidoes_mask.cuda()
-
-        vis_data = (frames, mean_origin, video_lengths, vidoes_mask)
-
-        return self.vid_encoding(vis_data)
-
-    def embed_txt(self, txt_data, volatile=True):
-        # text data
-        captions, cap_bows, lengths, cap_masks = txt_data
-        if captions is not None:
-            # captions = Variable(captions, volatile=volatile)
-            if torch.cuda.is_available():
-                captions = captions.cuda()
-
-        if cap_bows is not None:
-            # cap_bows = Variable(cap_bows,volatile=volatile)
-            if torch.cuda.is_available():
-                cap_bows = cap_bows.cuda()
-
-        if cap_masks is not None:
-            # cap_masks = Variable(cap_masks,volatile=volatile)
-            if torch.cuda.is_available():
-                cap_masks = cap_masks.cuda()
-        txt_data = (captions, cap_bows, lengths, cap_masks)
-
-        return self.text_encoding(txt_data)
-
-
-NAME_TO_MODELS = {'dual_encoding': Dual_Encoding}
-
-
-def get_model(name):
-    assert name in NAME_TO_MODELS, '%s not supported.' % name
-    return NAME_TO_MODELS[name]
+    def load_state_dict(self, state_dict):
+        self.vid_encoding.load_state_dict(state_dict[0])
+        self.text_encoding.load_state_dict(state_dict[1])
+        self.brand_encoding.load_state_dict(state_dict[2])
+        self.fusion_encoding.load_state_dict(state_dict[3])

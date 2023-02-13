@@ -314,6 +314,11 @@ def main():
         else:
             print("=> no checkpoint found at '{}'".format(opt.resume))
 
+    if opt.optimizer == 'adam':
+        opt.optimizer = torch.optim.Adam(model.parameters(), lr=opt.learning_rate)
+    elif opt.optimizer == 'rmsprop':
+        opt.optimizer = torch.optim.RMSprop(model.params1, lr=opt.learning_rate)
+
     fout_val_metric_hist = open(os.path.join(opt.logger_name, 'val_metric_hist.txt'), 'w')
     total_loss = []
     val_auc = []
@@ -371,7 +376,7 @@ def main():
             best_epoch = epoch
 
         lr_counter += 1
-        decay_learning_rate(opt, opt.optimizer, opt.lr_decay_rate)
+        decay_learning_rate(opt.optimizer, opt.lr_decay_rate)
         # Early Stopping.
         if not is_best:
             # Early stop occurs if the validation performance does not improve in ten consecutive epochs
@@ -384,7 +389,7 @@ def main():
             # we divide the learning rate by 2 and continue training;
             # but we use each learning rate for at least 3 epochs.
             if lr_counter > 2:
-                decay_learning_rate(opt, opt.optimizer, 0.5)
+                decay_learning_rate(opt.optimizer, 0.5)
                 lr_counter = 0
         else:
             no_impr_counter = 0
@@ -428,7 +433,6 @@ def train(opt, train_loader, model, epoch):
     train_logger = LogCollector()
 
     # switch to train mode
-    # TODO
     model.vid_encoding.train()
     model.text_encoding.train()
     model.brand_encoding.train()
@@ -447,13 +451,7 @@ def train(opt, train_loader, model, epoch):
 
     loss_func = CrossCLR_onlyIntraModality(logger=train_logger).to(device)
 
-    optimizer = None
-    if opt.optimizer == 'adam':
-        optimizer = torch.optim.Adam(model.parameters(), lr=opt.learning_rate)
-    elif opt.optimizer == 'rmsprop':
-        optimizer = torch.optim.RMSprop(model.params1, lr=opt.learning_rate)
-
-    print('Epoch[{0} / {1}] LR: {2}'.format(epoch, opt.num_epochs, get_learning_rate(optimizer)[0]))
+    print('Epoch[{0} / {1}] LR: {2}'.format(epoch, opt.num_epochs, get_learning_rate(opt.optimizer)[0]))
 
     for i, train_data in enumerate(train_loader):
         # measure data loading time
@@ -466,12 +464,12 @@ def train(opt, train_loader, model, epoch):
         model.logger = train_logger
         model.Eiters += 1
         model.logger.update('Eit', model.Eiters)
-        model.logger.update('lr', optimizer.param_groups[0]['lr'])
+        model.logger.update('lr', opt.optimizer.param_groups[0]['lr'])
 
         # Update the model
         brand_emb, post_emb = model(brand_ids, videos, captions)
 
-        optimizer.zero_grad()
+        opt.optimizer.zero_grad()
         loss = loss_func(brand_emb, post_emb)
         # loss = loss_func(brand_ids, brand_emb, post_emb)
         # loss = loss_func(brand_emb)
@@ -481,7 +479,7 @@ def train(opt, train_loader, model, epoch):
         loss.backward()
         if opt.grad_clip > 0:
             clip_grad_norm_(model.parameters(), opt.grad_clip)
-        optimizer.step()
+        opt.optimizer.step()
 
         progbar.add(post_emb.size(0), values=[('loss', loss.item())])
 
@@ -548,7 +546,7 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar', prefix='', be
         os.remove(prefix + 'checkpoint_epoch_%s.pth.tar' % best_epoch)
 
 
-def decay_learning_rate(opt, optimizer, decay):
+def decay_learning_rate(optimizer, decay):
     """decay learning rate to the last LR"""
     for param_group in optimizer.param_groups:
         param_group['lr'] = param_group['lr'] * decay

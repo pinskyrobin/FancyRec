@@ -2,6 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.init
+from pip._internal.utils.deprecation import deprecated
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 # clip_grad_norm_ for 0.4.0, clip_grad_norm for 0.3.1
 import numpy as np
@@ -13,7 +14,6 @@ from torch.autograd import Function
 
 """模型具体结构说明的代码文件
 """
-
 
 def get_we_parameter(vocab, w2v_file):
     # w2v的映射
@@ -589,6 +589,7 @@ class Fuse_Visual_Text(nn.Module):
 
 
 # 我们的模型结构定义
+@deprecated("Use `FGMCD.FGMCD` instead")
 class FGMCD(nn.Module):
 
     def __init__(self, opt):

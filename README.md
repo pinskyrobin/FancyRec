@@ -43,6 +43,8 @@ python preprocess/preprocess.py
 
 Run the following script to train the model.
 
+You can access http://hpc.hitsz.edu.cn/home/instance to train and test the model.
+
 ```shell
 sh bin/A100.sh # GPU enabled
 sh bin/public_cluster # CPU only

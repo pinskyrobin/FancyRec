@@ -7,15 +7,31 @@ import numpy as np
 from util.constant import device
 
 
-def cosine_sim(emb1, emb2):
-    """compute cosine similarity of two embeddings
-    Args:
-        emb1 
-        emb2 
-    Returns:
-        float: cosine similarity between (-1, 1)
+# def cosine_sim(emb1, emb2):
+#     """compute cosine similarity of two embeddings
+#     Args:
+#         emb1
+#         emb2
+#     """
+#     return emb1.mm(emb2.t())
+
+# l2正则化
+def l2norm(X):
+    """L2-normalize columns of X
     """
-    return emb1.mm(emb2.t())
+    norm = torch.pow(X, 2).sum(dim=1, keepdim=True).sqrt()
+    X = torch.div(X, norm)
+    return X
+
+
+# 余弦相似度
+def cosine_sim(im, s):
+    """Cosine similarity between all the image and sentence pairs
+    """
+    # l2规范化
+    im = l2norm(im)
+    s = l2norm(s)
+    return im.mm(s.t())
 
 
 class MaxMargin_coot(nn.Module):
@@ -78,7 +94,7 @@ class CrossCLR_onlyIntraModality(nn.Module):
         """
         batch_size = brand.shape[0]
 
-        # Normalize features 
+        # Normalize features
         brand = nn.functional.normalize(brand, dim=1)
         post = nn.functional.normalize(post, dim=1)
 
@@ -114,7 +130,8 @@ class CrossCLR_onlyIntraModality(nn.Module):
         loss_b = self.compute_loss(brand_logits, mask_b)
         loss_p = self.compute_loss(post_logits, mask_p)
 
-        return (loss_b.mean() + loss_p.mean()) / 2
+        # return (loss_b.mean() + loss_p.mean()) / 2
+        return loss_b.mean()
 
 
 class CrossCLR_noq(nn.Module):

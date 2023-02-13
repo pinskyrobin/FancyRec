@@ -4,7 +4,7 @@ import sys
 
 import torch
 
-from FGMCD import FGMCD
+from model import FGMCD
 
 import logging
 import json

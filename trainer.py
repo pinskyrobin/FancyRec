@@ -27,7 +27,7 @@ from util.common import makedirsforfile, checkToSkip
 from util.util import read_dict, AverageMeter, LogCollector
 from util.generic_utils import Progbar
 from evaluator import test_post_ranking
-from FGMCD import FGMCD, get_we_parameter
+from model import FGMCD, get_we_parameter
 
 INFO = __file__
 
@@ -429,11 +429,10 @@ def train(opt, train_loader, model, epoch):
 
     # switch to train mode
     # TODO
-    # model.vid_encoding.train()
-    # model.text_encoding.train()
-    # model.brand_encoding.train()
-    # model.fusion_encoding.train()
-    model.train()
+    model.vid_encoding.train()
+    model.text_encoding.train()
+    model.brand_encoding.train()
+    model.fusion_encoding.train()
 
     # optimize brand-net first
     progbar = Progbar(len(train_loader.dataset))
@@ -448,8 +447,6 @@ def train(opt, train_loader, model, epoch):
 
     loss_func = CrossCLR_onlyIntraModality(logger=train_logger).to(device)
 
-    # loss_func = LabLoss().to(device)
-
     optimizer = None
     if opt.optimizer == 'adam':
         optimizer = torch.optim.Adam(model.parameters(), lr=opt.learning_rate)
@@ -462,7 +459,7 @@ def train(opt, train_loader, model, epoch):
         # measure data loading time
         data_time.update(time.time() - end)
 
-        brand_ids = train_data[0].to(device)
+        brand_ids = train_data[0]
         videos = train_data[1]
         captions = train_data[2]
 
@@ -472,23 +469,7 @@ def train(opt, train_loader, model, epoch):
         model.logger.update('lr', optimizer.param_groups[0]['lr'])
 
         # Update the model
-        videos, videos_origin, vis_lengths, vidoes_mask = videos
-        cap_wids, cap_bows, txt_lengths, cap_mask = captions
-        if cap_wids is not None:
-            cap_wids = cap_wids.to(device)
-        if cap_bows is not None:
-            cap_bows = cap_bows.to(device)
-        if cap_mask is not None:
-            cap_mask = cap_mask.to(device)
-
-        brand_ids = brand_ids.to(device)
-        videos = videos.to(device)
-        videos_origin = videos_origin.to(device)
-        vidoes_mask = vidoes_mask.to(device)
-
-        brand_emb, post_emb = model(brand_ids,
-                                    videos, videos_origin, vis_lengths, vidoes_mask,
-                                    cap_wids, cap_bows, txt_lengths, cap_mask)
+        brand_emb, post_emb = model(brand_ids, videos, captions)
 
         optimizer.zero_grad()
         loss = loss_func(brand_emb, post_emb)

@@ -67,7 +67,11 @@ def encode_data(model, data_loader, log_step=10, logging=print):
             brands.extend(brand_ids)
             # compute the embeddings
             # 验证阶段不需要计算梯度
-            _, post_emb = model(brand_ids, videos, captions)
+            videos, videos_origin, vis_lengths, vidoes_mask = videos
+            cap_wids, cap_bows, txt_lengths, cap_mask = captions
+            _, post_emb = model(brand_ids,
+                                videos, videos_origin, vis_lengths, vidoes_mask,
+                                cap_wids, cap_bows, txt_lengths, cap_mask)
 
             # initialize the numpy arrays given the size of the embeddings
             if post_embs is None:
@@ -90,7 +94,7 @@ def encode_data(model, data_loader, log_step=10, logging=print):
                 logging('Process: [{0:2d}/{1:2d}]\t'
                         '{e_log}\t'
                         'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'.format(
-                            i, len(data_loader), batch_time=batch_time, e_log=str(model.logger)))
+                    i, len(data_loader), batch_time=batch_time, e_log=str(model.logger)))
             del videos, captions
 
         return brands, post_embs

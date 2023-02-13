@@ -1,8 +1,5 @@
-import torch
-from torch.autograd import Variable
 from torchvision import transforms
-from torch.utils.data import Dataset, DataLoader
-import numpy as np
+from torch.utils.data import Dataset
 from PIL import Image
 import os
 

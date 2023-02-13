@@ -12,7 +12,7 @@ from torch.nn.utils import clip_grad_norm_
 
 import evaluator
 import util.data_provider as data
-from loss import TripletLoss
+from loss_exp import CrossCLR_onlyIntraModality
 from preprocess.text2vec import get_text_encoder
 from preprocess.vocab import Vocabulary
 
@@ -440,11 +440,13 @@ def train(opt, train_loader, model, epoch):
     end = time.time()
     train_loss = []
 
-    loss_func = TripletLoss(margin=opt.margin,
-                            max_violation=opt.max_violation,
-                            cost_style=opt.cost_style,
-                            direction=opt.direction,
-                            loss_fun=opt.loss_fun).to(device)
+    # loss_func = TripletLoss(margin=opt.margin,
+    #                         max_violation=opt.max_violation,
+    #                         cost_style=opt.cost_style,
+    #                         direction=opt.direction,
+    #                         loss_fun=opt.loss_fun).to(device)
+
+    loss_func = CrossCLR_onlyIntraModality(logger=train_logger).to(device)
 
     # loss_func = LabLoss().to(device)
 
@@ -470,7 +472,6 @@ def train(opt, train_loader, model, epoch):
         model.logger.update('lr', optimizer.param_groups[0]['lr'])
 
         # Update the model
-        # TODO
         videos, videos_origin, vis_lengths, vidoes_mask = videos
         cap_wids, cap_bows, txt_lengths, cap_mask = captions
         if cap_wids is not None:
@@ -490,7 +491,8 @@ def train(opt, train_loader, model, epoch):
                                     cap_wids, cap_bows, txt_lengths, cap_mask)
 
         optimizer.zero_grad()
-        loss = loss_func(brand_ids, brand_emb, post_emb)
+        loss = loss_func(brand_emb, post_emb)
+        # loss = loss_func(brand_ids, brand_emb, post_emb)
         # loss = loss_func(brand_emb)
         train_loss.append(loss.item())
         model.logger.update('Le', loss.item(), brand_emb.size(0))

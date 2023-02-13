@@ -14,7 +14,7 @@ import evaluator
 import util.data_provider as data
 from loss import TripletLoss
 from preprocess.text2vec import get_text_encoder
-# from model import FGMCD, get_we_parameter
+from preprocess.vocab import Vocabulary
 
 import logging
 import tensorboard_logger as tb_logger

@@ -1,27 +1,19 @@
 from __future__ import print_function
-import pickle
-import time
 import os
 import sys
 
 import torch
 
-import evaluation
-import util.data_provider as data
-from model import FGMCD
-from util.vocab import Vocabulary
-from util.text2vec import get_text_encoder
+from FGMCD import FGMCD
 
 import logging
 import json
 import numpy as np
 
 import argparse
-from basic.util import read_dict
-from basic.constant import ROOT_PATH
-from basic.wordbigfile import WordBigFile
-from basic.common import makedirsforfile, checkToSkip
-from basic.generic_utils import Progbar
+from util.constant import ROOT_PATH
+from util.common import makedirsforfile, checkToSkip
+from util.generic_utils import Progbar
 
 
 def parse_args():

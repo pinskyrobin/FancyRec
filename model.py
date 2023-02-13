@@ -2,18 +2,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.init
-import torchvision.models as models
-from torch.autograd import Variable
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-import torch.backends.cudnn as cudnn
 # clip_grad_norm_ for 0.4.0, clip_grad_norm for 0.3.1
-from torch.nn.utils.clip_grad import clip_grad_norm_
 import numpy as np
 from collections import OrderedDict
 import torch.nn.functional as F
-from loss import TripletLoss, LabLoss
-from basic.wordbigfile import WordBigFile
-from transformers import BertModel, BertTokenizer, BertConfig
+from util.wordbigfile import WordBigFile
+from transformers import BertModel, BertConfig
 from torch.autograd import Function
 
 """模型具体结构说明的代码文件
@@ -231,11 +226,11 @@ class VisualEncoder(nn.Module):
             # level 2+3
             features = torch.cat((gru_out, con_out, output), 1)  # 6144
             # level 1+2
-            # features = torch.cat((gru_out, org_out, output), 1)
+            # features = torch.cat((gru_out, org_out, out), 1)
             # level 1+3
-            # features = torch.cat((con_out, org_out, output), 1)
+            # features = torch.cat((con_out, org_out, out), 1)
             # level 1
-            # features = torch.cat((org_out, output), 1)
+            # features = torch.cat((org_out, out), 1)
             # level 2
             # features = gru_out
             # level 3
@@ -409,7 +404,7 @@ class TextEncoder(nn.Module):
 
         # 文本双向gru输出维度 batchsize*sequence_len(序列长度)*1024(表示hidden_size*num_directions)
         gru_init_out, _ = self.rnn(packed)
-        # Reshape *final* output to (batch_size, hidden_size*num_directions)
+        # Reshape *final* out to (batch_size, hidden_size*num_directions)
         padded = pad_packed_sequence(gru_init_out, batch_first=True)
 
         gru_init_out = padded[0]

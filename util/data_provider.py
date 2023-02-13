@@ -3,18 +3,18 @@ import json
 
 import torch
 import torch.utils.data as data
-import numpy as np
 from transformers import BertTokenizer
-from basic.util import get_visual_id, read_dict
-from util.vocab import clean_str
+from util.util import get_visual_id, read_dict
+from preprocess.vocab import clean_str
 import os
+
 VIDEO_MAX_LEN = 64
 # global
 tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
 
 
 def info(opt):
-    img_info = read_dict(os.path.join(opt.rootpath,"img_info.txt"))
+    img_info = read_dict(os.path.join(opt.rootpath, "img_info.txt"))
     cls_file = os.path.join(opt.rootpath, "cls.txt")
     cls_file = open(cls_file, 'r').read()
     cls_info = json.loads(cls_file)
@@ -163,13 +163,13 @@ def collate_text(data):
     return text_data, idxs, cap_ids
 
 
-
 class Dataset4DualEncoding(data.Dataset):
     """
     Load captions and video_frames frame features by pre-trained CNN model.
     """
 
-    def __init__(self, opt, cap_file, video_feat, img_feat, bow2vec, vocab, text_net, n_caption=None, video2frames=None):
+    def __init__(self, opt, cap_file, video_feat, img_feat, bow2vec, vocab, text_net, n_caption=None,
+                 video2frames=None):
         # Captions
         self.captions = {}
         self.cap_ids = []
@@ -207,7 +207,7 @@ class Dataset4DualEncoding(data.Dataset):
     def __getitem__(self, index):
         cap_id = self.cap_ids[index]
         visual_id = get_visual_id(cap_id)
-        #=====================================================================
+        # =====================================================================
         # 判断这条数据是视频还是图像
         # 若来自视频
         if visual_id.startswith("video"):
@@ -346,7 +346,8 @@ class TxtDataSet4DualEncoding(data.Dataset):
         return self.length
 
 
-def get_data_loaders(opt, cap_files, video_feats, img_feats, vocab, bow2vec, text_net, batch_size=100, num_workers=2, n_caption=2,
+def get_data_loaders(opt, cap_files, video_feats, img_feats, vocab, bow2vec, text_net, batch_size=100, num_workers=2,
+                     n_caption=2,
                      video2frames=None):
     """
     Returns torch.utils.data.DataLoader for train and validation datasets
@@ -354,19 +355,23 @@ def get_data_loaders(opt, cap_files, video_feats, img_feats, vocab, bow2vec, tex
         cap_files: caption files (dict) keys: [train, val]
         visual_feats: image feats (dict) keys: [train, val]
     """
-    dset = {'train': Dataset4DualEncoding(opt, cap_files['train'], video_feats['train'], img_feats['train'], bow2vec, vocab,
-                                          text_net=text_net, video2frames=video2frames['train']),
-            'val': Dataset4DualEncoding(opt, cap_files['val'], video_feats['val'], img_feats['val'], bow2vec, vocab, text_net=text_net,
-                                        n_caption=n_caption,
-                                        video2frames=video2frames['val']),
-            # 新增一个用于检测模型性能的dataloader, 检测模型在训练集上是否过拟合
-            'check': Dataset4DualEncoding(opt, cap_files['train'], video_feats['train'], img_feats['train'], bow2vec, vocab, text_net=text_net,
-                                          n_caption=n_caption,
-                                          video2frames=video2frames['train']),
-            'test': Dataset4DualEncoding(opt, cap_files['test'], video_feats['test'], img_feats['test'], bow2vec, vocab, text_net=text_net,
-                                         n_caption=n_caption,
-                                         video2frames=video2frames['test'])
-            }
+    dset = {
+        'train': Dataset4DualEncoding(opt, cap_files['train'], video_feats['train'], img_feats['train'], bow2vec, vocab,
+                                      text_net=text_net, video2frames=video2frames['train']),
+        'val': Dataset4DualEncoding(opt, cap_files['val'], video_feats['val'], img_feats['val'], bow2vec, vocab,
+                                    text_net=text_net,
+                                    n_caption=n_caption,
+                                    video2frames=video2frames['val']),
+        # 新增一个用于检测模型性能的dataloader, 检测模型在训练集上是否过拟合
+        'check': Dataset4DualEncoding(opt, cap_files['train'], video_feats['train'], img_feats['train'], bow2vec, vocab,
+                                      text_net=text_net,
+                                      n_caption=n_caption,
+                                      video2frames=video2frames['train']),
+        'test': Dataset4DualEncoding(opt, cap_files['test'], video_feats['test'], img_feats['test'], bow2vec, vocab,
+                                     text_net=text_net,
+                                     n_caption=n_caption,
+                                     video2frames=video2frames['test'])
+        }
 
     collate_fn = None
     if text_net == 'bi-gru':
@@ -385,7 +390,8 @@ def get_data_loaders(opt, cap_files, video_feats, img_feats, vocab, bow2vec, tex
     return data_loaders
 
 
-def get_test_data_loaders(opt, cap_files, video_feats, img_feats, vocab, bow2vec, text_net, batch_size=100, num_workers=2, n_caption=2,
+def get_test_data_loaders(opt, cap_files, video_feats, img_feats, vocab, bow2vec, text_net, batch_size=100,
+                          num_workers=2, n_caption=2,
                           video2frames=None):
     """
     Returns torch.utils.data.DataLoader for test dataset
@@ -393,7 +399,8 @@ def get_test_data_loaders(opt, cap_files, video_feats, img_feats, vocab, bow2vec
         cap_files: caption files (dict) keys: [test]
         visual_feats: image feats (dict) keys: [test]
     """
-    dset = {'test': Dataset4DualEncoding(opt, cap_files['test'], video_feats['test'], img_feats['test'], bow2vec, vocab, text_net=text_net,
+    dset = {'test': Dataset4DualEncoding(opt, cap_files['test'], video_feats['test'], img_feats['test'], bow2vec, vocab,
+                                         text_net=text_net,
                                          n_caption=n_caption,
                                          video2frames=video2frames['test'])}
 

@@ -2,30 +2,24 @@
 from __future__ import print_function
 import pickle
 import os
-import sys
 
 import torch
 
-import evaluation
-from basic.imgbigfile import ImageBigFile
-from model import get_model
+import evaluator
+from util.imgbigfile import ImageBigFile
+from FGMCD import FGMCD
 import util.data_provider as data
-from util.vocab import Vocabulary
-from util.text2vec import get_text_encoder
+from preprocess.text2vec import get_text_encoder
 
 import logging
 import json
-import numpy as np
 
 import argparse
-from basic.util import read_dict
-from basic.constant import ROOT_PATH
-from basic.wordbigfile import WordBigFile
-from basic.common import makedirsforfile, checkToSkip
-from evaluation import test_post_ranking
+from util.util import read_dict
+from util.constant import ROOT_PATH
+from util.common import makedirsforfile, checkToSkip
+from evaluator import test_post_ranking
 import sys
-import importlib
-import torch.nn as nn
 
 """单独跑测试
 """
@@ -114,14 +108,14 @@ def main():
         caption_files, video_feats, img_feats, rnn_vocab, bow2vec, options.text_net, opt.batch_size, opt.workers, opt.n_caption, video2frames=video2frames)
 
     # Construct the model
-    model = get_model(options.model)(options)
+    model = FGMCD(options)
     model.load_state_dict(checkpoint['model'])
     # parallel
     # model = torch.nn.DataParallel(model, device_ids=[0, 1, 2, 3, 4])
     # model = nn.parallel.data_parallel(model, device_ids=[0, 1, 2, 3, 4])
     model.Eiters = checkpoint['Eiters']
 
-    brands, post_embs = evaluation.encode_data(model, data_loader['test'], opt.log_step, logging.info)
+    brands, post_embs = evaluator.encode_data(model, data_loader['test'], opt.log_step, logging.info)
 
     ranking_metrics = test_post_ranking(options.brand_num, options.metric, model, post_embs, brands)
     print('MedR:', ranking_metrics[0])

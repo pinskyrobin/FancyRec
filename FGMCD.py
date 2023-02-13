@@ -3,13 +3,12 @@ import torch
 import torch.nn as nn
 import torch.nn.init
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-import torch.backends.cudnn as cudnn
 # clip_grad_norm_ for 0.4.0, clip_grad_norm for 0.3.1
 import numpy as np
 import torch.nn.functional as F
 
-from basic.constant import device
-from basic.wordbigfile import WordBigFile
+from util.constant import device
+from util.wordbigfile import WordBigFile
 from torch.autograd import Function
 
 """模型具体结构说明的代码文件
@@ -263,11 +262,11 @@ class FGMCD(nn.Module):
             # level 2+3
             vid_emb = torch.cat((gru_out, con_out, output), 1)  # 6144
             # level 1+2
-            # vid_emb = torch.cat((gru_out, org_out, output), 1)
+            # vid_emb = torch.cat((gru_out, org_out, out), 1)
             # level 1+3
-            # vid_emb = torch.cat((con_out, org_out, output), 1)
+            # vid_emb = torch.cat((con_out, org_out, out), 1)
             # level 1
-            # vid_emb = torch.cat((org_out, output), 1)
+            # vid_emb = torch.cat((org_out, out), 1)
             # level 2
             # vid_emb = gru_out
             # level 3
@@ -298,7 +297,7 @@ class FGMCD(nn.Module):
 
         # 文本双向gru输出维度 batchsize*sequence_len(序列长度)*1024(表示hidden_size*num_directions)
         gru_init_out, _ = self.te_rnn(packed)
-        # Reshape *final* output to (batch_size, hidden_size*num_directions)
+        # Reshape *final* out to (batch_size, hidden_size*num_directions)
         padded = pad_packed_sequence(gru_init_out, batch_first=True)
 
         gru_init_out = padded[0]

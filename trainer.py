@@ -10,11 +10,10 @@ import json
 import torch
 from torch.nn.utils import clip_grad_norm_
 
-import evaluation
+import evaluator
 import util.data_provider as data
-from util.vocab import Vocabulary  # pickle反序列化用到
-from loss import TripletLoss, LabLoss
-from util.text2vec import get_text_encoder
+from loss import TripletLoss
+from preprocess.text2vec import get_text_encoder
 # from model import FGMCD, get_we_parameter
 
 import logging
@@ -22,12 +21,12 @@ import tensorboard_logger as tb_logger
 
 import argparse
 
-from basic.constant import ROOT_PATH, device
-from basic.imgbigfile import ImageBigFile
-from basic.common import makedirsforfile, checkToSkip
-from basic.util import read_dict, AverageMeter, LogCollector
-from basic.generic_utils import Progbar
-from evaluation import test_post_ranking
+from util.constant import ROOT_PATH, device
+from util.imgbigfile import ImageBigFile
+from util.common import makedirsforfile, checkToSkip
+from util.util import read_dict, AverageMeter, LogCollector
+from util.generic_utils import Progbar
+from evaluator import test_post_ranking
 from FGMCD import FGMCD, get_we_parameter
 
 INFO = __file__
@@ -392,11 +391,11 @@ def main():
 
     fout_val_metric_hist.close()
     """save loss and auc in file"""
-    with open('loss.txt', 'w') as f:
+    with open('out/loss.txt', 'w') as f:
         f.write(str(total_loss))
-    with open('val_auc.txt', 'w') as f:
+    with open('out/val_auc.txt', 'w') as f:
         f.write(str(val_auc))
-    with open('test_total_res.txt', 'w') as f:
+    with open('out/test_total_res.txt', 'w') as f:
         f.write(str(test_auc))
 
     print('best performance on Val: {}\n'.format(best_rsum))
@@ -405,10 +404,10 @@ def main():
 
     # generate evaluation shell script
     if testCollection == 'iacc.3':
-        templete = ''.join(open('util/TEMPLATE_do_predict.sh').readlines())
+        templete = ''.join(open('bin/TEMPLATE_do_predict.sh').readlines())
         script_str = templete.replace('@@@query_sets@@@', 'tv16.avs.txt,tv17.avs.txt,tv18.avs.txt')
     else:
-        templete = ''.join(open('util/TEMPLATE_do_test.sh', 'r', encoding='utf8').readlines())
+        templete = ''.join(open('bin/TEMPLATE_do_test.sh', 'r', encoding='utf8').readlines())
         script_str = templete.replace('@@@n_caption@@@', str(opt.n_caption))
     script_str = script_str.replace('@@@rootpath@@@', rootpath)
     script_str = script_str.replace('@@@testCollection@@@', testCollection)
@@ -519,7 +518,7 @@ def train(opt, train_loader, model, epoch):
 def validate(opt, val_loader, model):
     # compute the encoding for all the validation video_frames and captions
     # return brands' index and post embeddings in validation set
-    brands, post_embs = evaluation.encode_data(model, val_loader, opt.log_step, logging.info)
+    brands, post_embs = evaluator.encode_data(model, val_loader, opt.log_step, logging.info)
 
     # we load data as video_frames-sentence pairs,
     # but we only need to forward each video_frames once for evaluation,

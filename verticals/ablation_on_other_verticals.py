@@ -2,14 +2,14 @@
 在insCar外 其他垂直领域数据上的实验
 """
 import pandas as pd
-from basic.util import read_dict, write_dict
+from util.util import read_dict, write_dict
 import os
-from preprocess_videos import video2frame, video2idx_and_idx2video
-from extract_frame_feature import extract
-from util.txt2bin import process
-from util.get_frameInfo import get_frame_info
-from preprocess_images import obtain_images, extract_images_features, img2idx_and_idx2img
-from preprocess_captions import extract_image_captions, extract_video_captions, imgs_split_train_val_test, \
+from preprocess.preprocess_videos import video2frame, video2idx_and_idx2video
+from preprocess.extract_frame_feature import extract
+from preprocess.txt2bin import process
+from preprocess.get_frameInfo import get_frame_info
+from preprocess.preprocess_images import obtain_images, extract_images_features, img2idx_and_idx2img
+from preprocess.preprocess_captions import extract_image_captions, extract_video_captions, imgs_split_train_val_test, \
     videos_split_train_val_test, merge_captions_in_videos_and_imgs
 
 

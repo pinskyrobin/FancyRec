@@ -39,7 +39,7 @@ def random_sim(num_brands, num_test_posts):
 
 
 # 对提取的视频、图像、文本特征进一步编码(embedding)
-def encode_data(model, data_loader, log_step=10, logging=print, return_ids=False):
+def encode_data(model, data_loader, log_step=10, logging=print):
     """Encode all videos and captions loadable by `data_loader`
     """
     batch_time = AverageMeter()
@@ -89,16 +89,11 @@ def encode_data(model, data_loader, log_step=10, logging=print, return_ids=False
             if i % log_step == 0:
                 logging('Process: [{0:2d}/{1:2d}]\t'
                         '{e_log}\t'
-                        'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'
-                .format(
-                    i, len(data_loader), batch_time=batch_time,
-                    e_log=str(model.logger)))
+                        'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'.format(
+                            i, len(data_loader), batch_time=batch_time, e_log=str(model.logger)))
             del videos, captions
 
-        if return_ids:
-            return brands, post_embs, video_ids, caption_ids
-        else:
-            return brands, post_embs
+        return brands, post_embs
 
 
 # 计算各个评价指标

@@ -10,6 +10,7 @@ from util.imgbigfile import ImageBigFile
 from model import FGMCD
 import util.data_provider as data
 from preprocess.text2vec import get_text_encoder
+from preprocess.vocab import Vocabulary
 
 import logging
 import json

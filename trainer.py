@@ -372,7 +372,7 @@ def main():
             'best_rsum': best_rsum,
             'opt': opt,
             'Eiters': model.Eiters,
-        }, sum > best_rsum, filename='checkpoint_epoch_%s.pth.tar' % epoch, prefix=opt.logger_name + '/',
+        }, sum, best_rsum, filename='checkpoint_epoch_%s.pth.tar' % epoch, prefix=opt.logger_name + '/',
             best_epoch=best_epoch)
         if is_best:
             # save_checkpoint({
@@ -548,13 +548,12 @@ def validate(opt, val_loader, model):
     return sum, AUC, NDCG_10, NDCG_50, MedR, MeanR, r1, r5, r10
 
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth.tar', prefix='', best_epoch=None):
+def save_checkpoint(state, sum, best_rsum, filename='checkpoint.pth.tar', prefix='', best_epoch=None):
     """save checkpoint at specific path"""
-    torch.save(state, prefix + filename)
-    if is_best:
+    if best_epoch is None or sum > best_rsum * 0.9:
+        torch.save(state, prefix + filename)
+    if sum > best_rsum:
         shutil.copyfile(prefix + filename, prefix + 'model_best.pth.tar')
-        if best_epoch is not None:
-            os.remove(prefix + 'checkpoint_epoch_%s.pth.tar' % best_epoch)
 
 
 def decay_learning_rate(optimizer, decay):

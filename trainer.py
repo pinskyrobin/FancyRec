@@ -160,8 +160,10 @@ def main():
         modalities = "single_modal_text"
     else:
         modalities = "visual_plus_text"
-    opt.logger_name = os.path.join(rootpath, trainCollection, opt.cv_name, valCollection, model_info, text_encode_info,
-                                   visual_encode_info, mapping_info, loss_info, optimizer_info, opt.postfix, modalities)
+    # opt.logger_name = os.path.join(rootpath, trainCollection, model_info, text_encode_info, visual_encode_info,
+    #                                   mapping_info, loss_info, optimizer_info, opt.postfix, modalities)
+
+    opt.logger_name = os.path.join(rootpath, "model")
 
     # exit if file exists and overwrite=0
     if checkToSkip(os.path.join(opt.logger_name, 'model_best.pth.tar'), opt.overwrite):
@@ -364,15 +366,23 @@ def main():
         print(' * Current perf in Test: {}'.format(sum))
         print(' * Best perf in Test: {}'.format(best_rsum))
 
+        save_checkpoint({
+            'epoch': epoch + 1,
+            'model': model.state_dict(),
+            'best_rsum': best_rsum,
+            'opt': opt,
+            'Eiters': model.Eiters,
+        }, sum > best_rsum, filename='checkpoint_epoch_%s.pth.tar' % epoch, prefix=opt.logger_name + '/',
+            best_epoch=best_epoch)
         if is_best:
-            save_checkpoint({
-                'epoch': epoch + 1,
-                'model': model.state_dict(),
-                'best_rsum': best_rsum,
-                'opt': opt,
-                'Eiters': model.Eiters,
-            }, is_best, filename='checkpoint_epoch_%s.pth.tar' % epoch, prefix=opt.logger_name + '/',
-                best_epoch=best_epoch)
+            # save_checkpoint({
+            #     'epoch': epoch + 1,
+            #     'model': model.state_dict(),
+            #     'best_rsum': best_rsum,
+            #     'opt': opt,
+            #     'Eiters': model.Eiters,
+            # }, is_best, filename='checkpoint_epoch_%s.pth.tar' % epoch, prefix=opt.logger_name + '/',
+            #     best_epoch=best_epoch)
             best_epoch = epoch
 
         lr_counter += 1
@@ -381,7 +391,7 @@ def main():
         if not is_best:
             # Early stop occurs if the validation performance does not improve in ten consecutive epochs
             no_impr_counter += 1
-            if no_impr_counter > 80:
+            if no_impr_counter > 20:
                 print('Early stopping happened.\n')
                 break
 
@@ -533,7 +543,8 @@ def validate(opt, val_loader, model):
     tb_logger.log_value('r10', r10, step=model.Eiters)
 
     sum = 0.0
-    sum += (r1 + r5 + r10)
+    # sum += (r1 + r5 + r10)
+    sum += ((AUC + NDCG_10 + NDCG_50) * 100 + r1 + r5 + r10)
     return sum, AUC, NDCG_10, NDCG_50, MedR, MeanR, r1, r5, r10
 
 
@@ -542,8 +553,8 @@ def save_checkpoint(state, is_best, filename='checkpoint.pth.tar', prefix='', be
     torch.save(state, prefix + filename)
     if is_best:
         shutil.copyfile(prefix + filename, prefix + 'model_best.pth.tar')
-    if best_epoch is not None:
-        os.remove(prefix + 'checkpoint_epoch_%s.pth.tar' % best_epoch)
+        if best_epoch is not None:
+            os.remove(prefix + 'checkpoint_epoch_%s.pth.tar' % best_epoch)
 
 
 def decay_learning_rate(optimizer, decay):

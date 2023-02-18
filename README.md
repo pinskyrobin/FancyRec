@@ -2,21 +2,28 @@
 
 Source code of **Understanding Brand’s Association: Fine-Grained Multi-Modal Content Discovery For Brands**
 
-**Keywords:** Brand Association, Multi-Modal, Content Discovery
+<p align="center">
+  <img src="https://img.shields.io/github/package-json/version/pinskyrobin/fgmcd">
+  <img src="https://img.shields.io/github/repo-size/pinskyrobin/FGMCD?color=yellow">
+  <img src="https://img.shields.io/codefactor/grade/github/pinskyrobin/FGMCD/main">
+</p>
+
+![FGMCD](FGMCD.png)
+
+**Keywords**: Brand Association, Multi-Modal Content Discovery, Fine-Grained Video Retrieval
 
 ## Requirements
-
-#### Environments
-
-* **Ubuntu** 18.04
-* **CUDA** 11.2
-* **Python** 3.7
-* **PyTorch** 1.7.0
+<p align="center">
+  <img src="https://img.shields.io/badge/Ubuntu-18.04-blue">
+  <img src="https://img.shields.io/badge/Python-3.7-blue">
+  <img src="https://img.shields.io/badge/CUDA-11.2-blue">
+  <img src="https://img.shields.io/badge/PyTorch-1.7-blue">
+</p>
 
 We used virtualenv to setup a deep learning workspace that supports PyTorch.
 Run the following script to install the required packages.
 
-#### Required Data
+### Required Data
 
 Original data can be accessed through the specific server from HITSZ.
 Contact relevant person for more information.

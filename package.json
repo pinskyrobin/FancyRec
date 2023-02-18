@@ -1,0 +1,34 @@
+{
+    "name": "fgmcd",
+    "version": "2.0",
+    "description": "Source code of Understanding Brand’s Association: Fine-Grained Multi-Modal Content Discovery For Brands",
+    "keywords": [
+      "Brand Association",
+      "Multi-Modal",
+      "Content Discovery"
+    ],
+    "bugs": {
+      "url": "https://github.com/badges/pinskyrobin/FGMCD/issues"
+    },
+    "license": "Apache-2.0",
+    "author": "Robin Pinsky<pinskyrobin@gmail.com>",
+    "repository": {
+      "type": "git",
+      "url": "https://github.com/pinskyrobin/FGMCD"
+    },
+    "dependencies": {
+        "matplotlib": "3.5.2",
+        "numpy": "1.21.5",
+        "opencv-python": "4.7.0.68",
+        "pandas": "1.4.4",
+        "Pillow": "9.4.0",
+        "pip": "22.2.2",
+        "scipy": "1.9.1",
+        "six": "1.16.0",
+        "tensorboard_logger": "0.1.0",
+        "torch": "1.10.1+cu111",
+        "torchvision": "0.11.2+cu111",
+        "transformers": "4.26.0"
+    },
+    "type": "module"
+}

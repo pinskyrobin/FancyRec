@@ -4,7 +4,7 @@ Source code of **Understanding Brand’s Association: Fine-Grained Multi-Modal C
 
 <p align="center">
   <img src="https://img.shields.io/github/package-json/version/pinskyrobin/fgmcd">
-  <img src="https://img.shields.io/github/repo-size/pinskyrobin/FGMCD?color=yellow">
+  <img src="https://img.shields.io/github/repo-size/pinskyrobin/FGMCD?color">
   <img src="https://img.shields.io/codefactor/grade/github/pinskyrobin/FGMCD/main">
 </p>
 

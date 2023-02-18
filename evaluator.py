@@ -13,24 +13,44 @@ from util.util import AverageMeter, LogCollector
 from util.ndcg import ndcg_at_k
 
 
+# # l2正则化
+# def l2norm(X):
+#     """L2-normalize columns of X
+#     """
+#     norm = np.linalg.norm(X, axis=1, keepdims=True)
+#     return 1.0 * X / norm
+
+
+# # 计算品牌表示和posts表示的相似度分数
+# def cal_sim(brands_emb, posts_emb, measure='cosine'):
+#     result = None
+#     if measure == 'cosine':
+#         brands_emb = l2norm(brands_emb)
+#         posts_emb = l2norm(posts_emb)
+#         result = numpy.dot(brands_emb, posts_emb.T)
+#     elif measure == 'euclidean':
+#         result = distance.cdist(brands_emb, posts_emb, 'euclidean')
+#     return result
+
+
 # l2正则化
 def l2norm(X):
     """L2-normalize columns of X
     """
-    norm = np.linalg.norm(X, axis=1, keepdims=True)
-    return 1.0 * X / norm
+    norm = torch.pow(X, 2).sum(dim=1, keepdim=True).sqrt()
+    X = torch.div(X, norm)
+    return X
 
 
-# 计算品牌表示和posts表示的相似度分数
-def cal_sim(brands_emb, posts_emb, measure='cosine'):
-    result = None
-    if measure == 'cosine':
-        brands_emb = l2norm(brands_emb)
-        posts_emb = l2norm(posts_emb)
-        result = numpy.dot(brands_emb, posts_emb.T)
-    elif measure == 'euclidean':
-        result = distance.cdist(brands_emb, posts_emb, 'euclidean')
-    return result
+# 余弦相似度
+def cal_sim(im, s):
+    """Cosine similarity between all the image and sentence pairs
+    """
+    # l2规范化
+    im = l2norm(im)
+    s = l2norm(s)
+    return im.mm(s.t())
+
 
 
 # 对比实验random
@@ -54,16 +74,19 @@ def encode_data(model, data_loader, log_step=10, logging=print):
     end = time.time()
 
     # numpy array to keep all the embeddings
-    brands = []
-    post_embs = None
-    video_ids = [''] * len(data_loader.dataset)
-    caption_ids = [''] * len(data_loader.dataset)
+    # brands = []
+    # post_embs = None
+    brands = torch.tensor([], dtype=torch.int).to(device)
+    post_embs = torch.zeros((len(data_loader.dataset), 1024)).to(device)
+    # video_ids = [''] * len(data_loader.dataset)
+    # caption_ids = [''] * len(data_loader.dataset)
     with torch.no_grad():
         for i, (brand_ids, videos, captions, idxs, cap_ids, vid_ids) in enumerate(data_loader):
             # make sure val logger is used
             model.logger = val_logger
-
-            brands.extend(brand_ids)
+            brand_ids = brand_ids.to(device)
+            # brands.extend(brand_ids)
+            brands = torch.cat((brands, brand_ids), 0)
             # compute the embeddings
             # 验证阶段不需要计算梯度
             _, post_emb = model(brand_ids, videos, captions)
@@ -71,15 +94,17 @@ def encode_data(model, data_loader, log_step=10, logging=print):
             # initialize the numpy arrays given the size of the embeddings
             if post_embs is None:
                 # brand_emb = np.zeros((len(data_loader.dataset), brand_emb.size(1)))
-                post_embs = np.zeros((len(data_loader.dataset), post_emb.size(1)))
+                post_embs = torch.zeros((len(data_loader.dataset), post_emb.size(1))).to(device)
 
             # preserve the embeddings by copying from gpu and converting to numpy
-            # brand_embs[idxs] = brand_emb.data.cpu().numpy().copy()
-            post_embs[np.array(idxs)] = post_emb.data.cpu().numpy().copy()
+            post_embs[np.array(idxs)] = post_emb
 
-            for j, idx in enumerate(idxs):
-                caption_ids[idx] = cap_ids[j]
-                video_ids[idx] = vid_ids[j]
+            # brand_embs[idxs] = brand_emb.data.cpu().numpy().copy()
+            # post_embs[np.array(idxs)] = post_emb.data.cpu().numpy().copy()
+
+            # for j, idx in enumerate(idxs):
+            #     caption_ids[idx] = cap_ids[j]
+            #     video_ids[idx] = vid_ids[j]
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -109,17 +134,18 @@ def test_post_ranking(brand_num, metric, model, post_embs, brands):
     brand_list = [i for i in range(brand_num)]
     brand_ = torch.LongTensor(brand_list).to(device)
 
-    aspect_model.to(device)
+    # aspect_model.to(device)
 
     # aspects = aspect_model(brand_)
     aspects = aspect_model(brand_)
     # brand_num*2048
     aspects = aspects.permute((1, 0, 2)).mean(0)
     # compute scores between brand and post
-    aspects = aspects.data.cpu().numpy().copy()
+    # aspects = aspects.data.cpu().numpy().copy()
     # shape: brand_num * len(test_set)
 
-    scores = cal_sim(aspects, post_embs)
+    scores = cal_sim(aspects, post_embs).data.cpu().numpy().copy()
+    brands = brands.data.cpu().numpy().copy()
     # 对照实验1 随机相似度分数矩阵 # wmy
     # scores = random_sim(aspects.shape[0], post_embs.shape[1])
     if metric == 'auc':

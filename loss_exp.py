@@ -1,7 +1,6 @@
 from torch import nn
 import torch
 import torch.nn.functional as F
-import time
 import numpy as np
 
 from util.constant import device
@@ -130,8 +129,7 @@ class CrossCLR_onlyIntraModality(nn.Module):
         loss_b = self.compute_loss(brand_logits, mask_b)
         loss_p = self.compute_loss(post_logits, mask_p)
 
-        # return (loss_b.mean() + loss_p.mean()) / 2
-        return loss_b.mean()
+        return (loss_b.mean() + loss_p.mean()) / 2
 
 
 class CrossCLR_noq(nn.Module):
@@ -151,8 +149,8 @@ class CrossCLR_noq(nn.Module):
         self.temp_w = temperature_weights  # Temperature for scaling weights.
         self.negative_w = negative_weight  # Weight of negative scores.
         self.logger.info("===" * 30)
-        self.logger.info("Temp:{}, TempW:{}, NegW:{}, Sthrsh:{}".format(self.temperature, self.temp_w, self.negative_w,
-                                                                        self.score_threshold))
+        self.logger.info("Temp:{}, TempW:{}, NegW:{}, Sthrsh:{}".format(self.temperature, self.temp_w,
+                                                                        self.negative_w, self.score_threshold))
         self.logger.info("===" * 30)
         # create the queue
 
@@ -165,7 +163,7 @@ class CrossCLR_noq(nn.Module):
         diag = np.eye(batch_size)
         mask = torch.from_numpy(diag)
         mask = (1 - mask)
-        return mask.cuda(non_blocking=True)
+        return mask.to(device)
 
     def _get_positive_mask_bank(self, k, batch_size, ptr):
         diag = np.eye(batch_size)
@@ -176,13 +174,12 @@ class CrossCLR_noq(nn.Module):
         mask_bank = torch.from_numpy(diag_bank)
 
         if (ptr + batch_size) > k:
-            qptr_end = k
             inp_feat_k = batch_size - (ptr + batch_size - k)
             mask_bank[:, ptr:] -= mask[:, :inp_feat_k]
         else:
             mask_bank[:, ptr:ptr + batch_size] -= mask
 
-        return mask_bank.cuda(non_blocking=True)
+        return mask_bank.to(device)
 
     def forward(self, brand, post, input_brand=None, input_post=None):
         """
@@ -191,7 +188,8 @@ class CrossCLR_noq(nn.Module):
         Args:
             brand: Brand embeddings (batch, embed_dim)
             post: Post embeddings (batch, embed_dim)
-
+            input_post:
+            input_brand:
         Returns:
         """
 
@@ -225,19 +223,16 @@ class CrossCLR_noq(nn.Module):
 
         # ======================================================
         # Find index of influential samples and remove them from negative set
-        indices_brand_thrsh = indices_brand[sorted_brand < self.score_threshold]
-        indices_post_thrsh = indices_post[sorted_post < self.score_threshold]
-
-        labels = torch.arange(brand.shape[0]).to(device)
+        indices_brand_thresh = indices_brand[sorted_brand < self.score_threshold]
+        indices_post_thresh = indices_post[sorted_post < self.score_threshold]
 
         logits_clstr_brand = logits_clstr_brand * positive_mask
         logits_clstr_post = logits_clstr_post * positive_mask
 
-        negatives_brand = logits_clstr_brand[:, indices_brand_thrsh]
-        negatives_post = logits_clstr_post[:, indices_post_thrsh]
+        negatives_brand = logits_clstr_brand[:, indices_brand_thresh]
+        negatives_post = logits_clstr_post[:, indices_post_thresh]
 
         batch_size = input_brand.shape[0]
-        labels_prune = torch.arange(batch_size).to(device)
 
         brand_logits_prune = logits_per_image
         post_logits_prune = logits_per_text
@@ -248,20 +243,20 @@ class CrossCLR_noq(nn.Module):
             sorted_post2, indices_post2 = torch.sort(avg_sim_post)
             sorted_brand2 = sorted_brand2 / sorted_brand2.max(dim=-1, keepdim=True)[0]
             sorted_post2 = sorted_post2 / sorted_post2.max(dim=-1, keepdim=True)[0]
-            indices_brand_thrsh2 = indices_brand2[sorted_brand2 > self.score_threshold]
-            indices_post_thrsh2 = indices_post2[sorted_post2 > self.score_threshold]
+            indices_brand_thresh2 = indices_brand2[sorted_brand2 > self.score_threshold]
+            indices_post_thresh2 = indices_post2[sorted_post2 > self.score_threshold]
 
-            diag = np.eye(batch_size)
-            mask = torch.from_numpy((diag)).to(device)
             mask_prune_pos_brand = torch.ones_like(logits_per_image)
             mask_prune_pos_post = torch.ones_like(logits_per_text)
 
-            mask_prune_pos_brand[:, indices_brand_thrsh2] = 0
-            mask_prune_pos_post[:, indices_post_thrsh2] = 0
+            mask_prune_pos_brand[:, indices_brand_thresh2] = 0
+            mask_prune_pos_post[:, indices_post_thresh2] = 0
 
             for i in range(batch_size):
-                if mask_prune_pos_brand[i, i] == 0: mask_prune_pos_brand[i, i] = 1
-                if mask_prune_pos_post[i, i] == 0: mask_prune_pos_post[i, i] = 1
+                if mask_prune_pos_brand[i, i] == 0:
+                    mask_prune_pos_brand[i, i] = 1
+                if mask_prune_pos_post[i, i] == 0:
+                    mask_prune_pos_post[i, i] = 1
 
             brand_logits_prune = logits_per_image * mask_prune_pos_brand
             post_logits_prune = logits_per_text * mask_prune_pos_post
@@ -270,8 +265,8 @@ class CrossCLR_noq(nn.Module):
         post_logits = torch.cat([post_logits_prune, self.negative_w * negatives_post], dim=1)
 
         diag = np.eye(batch_size)
-        mask_brand = torch.from_numpy((diag)).to(device)
-        mask_post = torch.from_numpy((diag)).to(device)
+        mask_brand = torch.from_numpy(diag).to(device)
+        mask_post = torch.from_numpy(diag).to(device)
 
         multi_pos = 0
         num_p = 5
@@ -280,32 +275,32 @@ class CrossCLR_noq(nn.Module):
             positive_mask = self._get_positive_mask(brand.shape[0])
             sim_mask_brand = (input_brand @ input_brand.t()) * positive_mask
             sim_mask_post = (input_post @ input_post.t()) * positive_mask
-            _, topkidx_brand = torch.topk(sim_mask_brand, num_p, dim=1)
+            _, topk_idx_brand = torch.topk(sim_mask_brand, num_p, dim=1)
             topk_onehot_brand = torch.zeros_like(sim_mask_brand)
-            topk_onehot_brand.scatter_(1, topkidx_brand, 1)
+            topk_onehot_brand.scatter_(1, topk_idx_brand, 1)
             mask_brand[topk_onehot_brand.bool()] = mp_score
 
-            _, topkidx_post = torch.topk(sim_mask_post, num_p, dim=1)
+            _, topk_idx_post = torch.topk(sim_mask_post, num_p, dim=1)
             topk_onehot_post = torch.zeros_like(sim_mask_post)
-            topk_onehot_post.scatter_(1, topkidx_post, 1)
+            topk_onehot_post.scatter_(1, topk_idx_post, 1)
             mask_post[topk_onehot_post.bool()] = mp_score
 
-        mask_neg_v = torch.zeros_like(negatives_brand)
-        mask_neg_t = torch.zeros_like(negatives_post)
-        mask_v = torch.cat([mask_brand, mask_neg_v], dim=1)
-        mask_t = torch.cat([mask_post, mask_neg_t], dim=1)
+        mask_neg_brand = torch.zeros_like(negatives_brand)
+        mask_neg_post = torch.zeros_like(negatives_post)
+        mask_brand = torch.cat([mask_brand, mask_neg_brand], dim=1)
+        mask_post = torch.cat([mask_post, mask_neg_post], dim=1)
 
-        loss_i = self.compute_loss(brand_logits, mask_v)
-        loss_t = self.compute_loss(post_logits, mask_t)
+        loss_brand = self.compute_loss(brand_logits, mask_brand)
+        loss_post = self.compute_loss(post_logits, mask_post)
 
-        w_i = ((avg_sim_brand / sum(avg_sim_brand)))
-        w_t = ((avg_sim_post / sum(avg_sim_post)))
-        loss_i = loss_i * torch.exp(w_i / self.temp_w)
-        loss_t = loss_t * torch.exp(w_t / self.temp_w)
+        w_brand = (avg_sim_brand / sum(avg_sim_brand))
+        w_post = (avg_sim_post / sum(avg_sim_post))
+        loss_brand = loss_brand * torch.exp(w_brand / self.temp_w)
+        loss_post = loss_post * torch.exp(w_post / self.temp_w)
 
-        loss_i = sum(loss_i) / (sum(torch.exp(w_i / self.temp_w)))
-        loss_t = sum(loss_t) / (sum(torch.exp(w_t / self.temp_w)))
+        loss_brand = sum(loss_brand) / (sum(torch.exp(w_brand / self.temp_w)))
+        loss_post = sum(loss_post) / (sum(torch.exp(w_post / self.temp_w)))
 
-        loss = ((loss_i + loss_t)) / 2
+        loss = (loss_brand + loss_post) / 2
 
         return loss

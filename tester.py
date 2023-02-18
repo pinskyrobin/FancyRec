@@ -17,7 +17,7 @@ import json
 
 import argparse
 from util.util import read_dict
-from util.constant import ROOT_PATH
+from util.constant import ROOT_PATH, device
 from util.common import makedirsforfile, checkToSkip
 from evaluator import test_post_ranking
 import sys
@@ -120,7 +120,7 @@ def main():
                                              video2frames=video2frames)
 
     # Construct the model
-    model = FGMCD(options)
+    model = FGMCD(options).to(device)
     model.load_state_dict(checkpoint['model'])
     # parallel
     # model = torch.nn.DataParallel(model, device_ids=[0, 1, 2, 3, 4])
@@ -130,6 +130,7 @@ def main():
     brands, post_embs = evaluator.encode_data(model, data_loader['test'], opt.log_step, logging.info)
 
     ranking_metrics = test_post_ranking(options.brand_num, options.metric, model, post_embs, brands)
+    
     print('MedR:', ranking_metrics[0])
     print('MeanR:', ranking_metrics[1])
     print('AUC[0-1]:', ranking_metrics[2])

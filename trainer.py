@@ -163,7 +163,7 @@ def main():
     # opt.logger_name = os.path.join(rootpath, trainCollection, model_info, text_encode_info, visual_encode_info,
     #                                   mapping_info, loss_info, optimizer_info, opt.postfix, modalities)
 
-    opt.logger_name = os.path.join(rootpath, "model")
+    opt.logger_name = os.path.join(rootpath, "model", opt.postfix)
 
     # exit if file exists and overwrite=0
     if checkToSkip(os.path.join(opt.logger_name, 'model_best.pth.tar'), opt.overwrite):
@@ -355,21 +355,20 @@ def main():
         print("=======================Test Phase============================")
         print("==========================================================")
         sum, AUC, NDCG_10, NDCG_50, medR, meanR, r1, r5, r10 = validate(opt, data_loaders['test'], model)
-        test_res_str = "sum: " + str(sum) + "\nAUC: " + str(AUC) + "\nNDCG_10: " + str(NDCG_10) + "\nNDCG_50: " + str(
+        test_res_str = "epoch: " + str(epoch) + "sum: " + str(sum) + "\nAUC: " + str(AUC) + "\nNDCG_10: " + str(NDCG_10) + "\nNDCG_50: " + str(
             NDCG_50) + "\nMedR: " + str(medR) + \
                        "\nMeanR: " + str(meanR) + "\nr1: " + str(r1) + "\nr5: " + str(r5) + "\nr10: " + str(
             r10) + "\n\n\n\n\n"
         test_auc.append(test_res_str)
 
         is_best = sum > best_rsum
-        best_rsum = max(sum, best_rsum)
         print(' * Current perf in Test: {}'.format(sum))
         print(' * Best perf in Test: {}'.format(best_rsum))
 
-        save_checkpoint({
+        best_rsum = save_checkpoint({
             'epoch': epoch + 1,
             'model': model.state_dict(),
-            'best_rsum': best_rsum,
+            'best_rsum': sum,
             'opt': opt,
             'Eiters': model.Eiters,
         }, sum, best_rsum, filename='checkpoint_epoch_%s.pth.tar' % epoch, prefix=opt.logger_name + '/',
@@ -391,7 +390,7 @@ def main():
         if not is_best:
             # Early stop occurs if the validation performance does not improve in ten consecutive epochs
             no_impr_counter += 1
-            if no_impr_counter > 20:
+            if no_impr_counter > 50:
                 print('Early stopping happened.\n')
                 break
 
@@ -405,12 +404,13 @@ def main():
             no_impr_counter = 0
 
     fout_val_metric_hist.close()
-    """save loss and auc in file"""
-    with open('out/loss.txt', 'w') as f:
+    # save loss and auc in file
+    base_path = os.path.abspath(os.path.join(os.getcwd(), ".."))
+    with open(os.path.join(base_path, 'out', 'loss.txt'), 'w') as f:
         f.write(str(total_loss))
-    with open('out/val_auc.txt', 'w') as f:
+    with open(os.path.join(base_path, 'out', 'val_auc.txt'), 'w') as f:
         f.write(str(val_auc))
-    with open('out/test_total_res.txt', 'w') as f:
+    with open(os.path.join(base_path, 'out', 'test_total_res.txt'), 'w') as f:
         f.write(str(test_auc))
 
     print('best performance on Val: {}\n'.format(best_rsum))
@@ -419,15 +419,17 @@ def main():
 
     # generate evaluation shell script
     if testCollection == 'iacc.3':
-        templete = ''.join(open('bin/TEMPLATE_do_predict.sh').readlines())
+        templete = ''.join(open('TEMPLATE_do_predict.sh').readlines())
         script_str = templete.replace('@@@query_sets@@@', 'tv16.avs.txt,tv17.avs.txt,tv18.avs.txt')
     else:
-        templete = ''.join(open('bin/TEMPLATE_do_test.sh', 'r', encoding='utf8').readlines())
+        templete = ''.join(open('TEMPLATE_do_test.sh', 'r', encoding='utf8').readlines())
         script_str = templete.replace('@@@n_caption@@@', str(opt.n_caption))
     script_str = script_str.replace('@@@rootpath@@@', rootpath)
     script_str = script_str.replace('@@@testCollection@@@', testCollection)
     script_str = script_str.replace('@@@logger_name@@@', opt.logger_name)
     script_str = script_str.replace('@@@overwrite@@@', str(opt.overwrite))
+    script_str = script_str.replace('@@@checkpoint_name@@@', 'checkpoint_epoch_%s.pth.tar' % best_epoch)
+    script_str = script_str.replace('@@@batch_size@@@', str(opt.batch_size))
 
     # perform evaluation on test set
     runfile = 'do_test_%s_%s.sh' % (opt.model, testCollection)
@@ -550,10 +552,11 @@ def validate(opt, val_loader, model):
 
 def save_checkpoint(state, sum, best_rsum, filename='checkpoint.pth.tar', prefix='', best_epoch=None):
     """save checkpoint at specific path"""
-    if best_epoch is None or sum > best_rsum * 0.9:
+    if best_epoch is None or sum > best_rsum * 0.99:
         torch.save(state, prefix + filename)
     if sum > best_rsum:
         shutil.copyfile(prefix + filename, prefix + 'model_best.pth.tar')
+    return max(sum, best_rsum)
 
 
 def decay_learning_rate(optimizer, decay):

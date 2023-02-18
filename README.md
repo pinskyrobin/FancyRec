@@ -46,11 +46,42 @@ Run the following script to train the model.
 You can access http://hpc.hitsz.edu.cn/home/instance to train and test the model.
 
 ```shell
-sh bin/A100.sh # GPU enabled
-sh bin/public_cluster # CPU only
+cd bin
+sh instance.sh # on instance
+# OR
+sh public_cluster.sh # on slurm
 ```
 
-Remember set right path of `ROOT_PATH` and `Python` path.
+Remember
+- Set right path of `ROOT_PATH` and `Python` path.  
+- Set `gpu=-1` to disable GPU.
+- Modify `device` in `util/constant.py` to try other GPU backends.
+
+## Testing
+
+Run the following script to test the model.
+
+```shell
+cd bin
+sh test_instance.sh # on instance
+# OR
+sh test_public_cluster.sh # on slurm
+# OR
+# test specific epoch output
+# for example, `sh test_instance.sh 2`
+# will test model named `checkpoint_epoch_2.pth.tar`
+sh test_instance.sh $epoch$ 
+```
+
+Remember
+- Set right path of `rootpath` and `logger_name`.
+- **Must** set which model would you want to test.
+  - Check `insCar/model/instance` or `insCar/model/`
+  - Comment `--checkpoint_name` if test the best model
+- **Cannot** test when GPU type not match between train and test phase.
+  - That is to say, when training on CUDA device, one can only test on CUDA device.
+  - Get RunTimeError when trying to test on the device without CUDA.
+- Modify `device` in `util/constant.py` to try other GPU backends.
 
 ## Dataset Structure
 

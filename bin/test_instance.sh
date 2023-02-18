@@ -1,6 +1,6 @@
-rootpath=/home/u190110105/insCar
+rootpath=/group_homes/public_cluster/home/u190110105/insCar
 testCollection=insCartest
-logger_name=/home/u190110105/insCar/model/public_cluster
+logger_name=/group_homes/public_cluster/home/u190110105/insCar/model/instance
 n_caption=1
 overwrite=1
 batch_size=8

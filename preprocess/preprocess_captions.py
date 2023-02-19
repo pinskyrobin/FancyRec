@@ -123,7 +123,7 @@ def extract_video_captions(root_path, brand_path, vertical):
         f.write(json.dumps(video2captions))
 
 
-def imgs_split_train_val_test(source_root_path, target_root_path, vertical, brand_path):
+def imgs_split_train_val_test(source_root_path, target_root_path, vertical, brand_path, threshold=-1):
     """
     将img和对应的caption 划分train/val/test 比例80:5:15
     :return:
@@ -148,7 +148,7 @@ def imgs_split_train_val_test(source_root_path, target_root_path, vertical, bran
 
     ids = [img2id[img] for img in img_names if img in img2id]
     # print(ids)
-    print('有效图片数', len(ids))
+    print('valid pic num', len(ids))
 
     # 读取品牌数据集
     if isinstance(brand_path, str):
@@ -167,9 +167,15 @@ def imgs_split_train_val_test(source_root_path, target_root_path, vertical, bran
         files = os.listdir(os.path.join(source_root_path, brand))
         files.sort()
         items.clear()
+        if threshold > 0:
+            cnt = 0
         for file in files:
             if not file.endswith("jpg"):
                 continue
+            if threshold > 0:
+                cnt += 1
+                if cnt == threshold:
+                    break
             img = brand + '/' + file
             if img in img2id and img2id[img] in id2img:
                 items.append(img2id[img])
@@ -331,11 +337,3 @@ def merge_captions_in_videos_and_imgs(target_root_path, vertical):
         f_t = open(target_file, 'a+')
         f_t.writelines(f_s)
         f_t.close()
-
-
-if __name__ == '__main__':
-    # generate_train_val_test()
-    root_path = '/root/VisualSearch/ins_Car_data'
-    # extract_image_captions(root_path)
-    # imgs_split_train_val_test()
-    merge_captions_in_videos_and_imgs()

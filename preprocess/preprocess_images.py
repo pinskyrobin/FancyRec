@@ -45,7 +45,7 @@ def img2idx_and_idx2img(source_root, path, vertical):
     write_dict(target_path, img_info)
 
 
-def obtain_images(root, brand_path):
+def obtain_images(root, brand_path, threshold=-1):
     # 读取品牌数据集
     if isinstance(brand_path, str):
         brand_list = os.listdir(brand_path)
@@ -58,11 +58,17 @@ def obtain_images(root, brand_path):
         files = os.listdir(os.path.join(root, brand))
         files.sort()
         image_name = []
+        if threshold > 0:
+            cnt = 0
         for file in files:
             # 获取图像
             if not file.endswith('jpg'):
                 continue
             image_name.append(brand + '/' + file)
+            if threshold > 0:
+                cnt += 1
+                if cnt == threshold:
+                    break
         print('{} images in brand {} totally.'.format(len(image_name), index))
         images_list.extend(image_name)
     print("{} images in all".format(len(images_list)))  # 104312
@@ -84,7 +90,8 @@ def extract_images_features(root_path, image_name_list, img_feat_save_path):
     target_feature_file = os.path.join(img_feat_save_path, 'images_feature_dim_2048.txt')
     # 文件存在就删除
     if os.path.exists(target_feature_file):
-        os.remove(target_feature_file)
+        return
+        # os.remove(target_feature_file)
     ndim = 2048
     f = open(target_feature_file, 'a+')
     for i, input in enumerate(train_loader):
@@ -104,12 +111,3 @@ def extract_images_features(root_path, image_name_list, img_feat_save_path):
             f.write(line + '\n')
         # break
     f.close()
-
-
-if __name__ == '__main__':
-    # image_names_list = obtain_images()
-    root_path = '/root/VisualSearch/ins_Car_data'
-    img2idx_and_idx2img()
-    # extract_images_features(root_path, image_names_list)
-
-

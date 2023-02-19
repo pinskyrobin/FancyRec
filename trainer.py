@@ -12,6 +12,7 @@ from torch.nn.utils import clip_grad_norm_
 
 import evaluator
 import util.data_provider as data
+from loss import TripletLoss
 from loss_exp import CrossCLR_onlyIntraModality
 from preprocess.text2vec import get_text_encoder
 from preprocess.vocab import Vocabulary
@@ -89,7 +90,7 @@ def parse_args():
     parser.add_argument('--fusion_style', type=str, default='fc', help='(fc|mfb). final fusion style between visual. '
                                                                        'and text')
     # loss
-    parser.add_argument('--loss_fun', type=str, default='mrl', help='(mrl|eet) loss function.(default: mrl)')
+    parser.add_argument('--loss_fun', type=str, default='mrl', help='(mrl|CrossCLR) loss function.(default: mrl)')
     parser.add_argument('--margin', type=float, default=0.2, help='rank loss margin')
     parser.add_argument('--direction', type=str, default='all', help='retrieval direction (b2p|p2b|all)')
     parser.add_argument('--max_violation', action='store_true', help='use max instead of sum in the rank loss')
@@ -160,8 +161,6 @@ def main():
         modalities = "single_modal_text"
     else:
         modalities = "visual_plus_text"
-    # opt.logger_name = os.path.join(rootpath, trainCollection, model_info, text_encode_info, visual_encode_info,
-    #                                   mapping_info, loss_info, optimizer_info, opt.postfix, modalities)
 
     opt.logger_name = os.path.join(rootpath, "model", opt.postfix)
 
@@ -195,10 +194,16 @@ def main():
                      for x in collections}
     # wrap video features
     video_feats = {x: ImageBigFile(video_feat_path[x]) for x in video_feat_path}
+    # video_feats = {
+    #     'train': None,
+    #     'val': None,
+    #     'test': None
+    # }
     # wrap image features
     img_feats = {x: ImageBigFile(img_feat_path[x]) for x in img_feat_path}
     # get video feature dimension(2048)
     opt.visual_feat_dim = video_feats['train'].ndims
+    # opt.visual_feat_dim = 2048
 
     # set bow vocabulary and encoding
     bow_vocab_file = os.path.join(rootpath, opt.trainCollection, 'TextData', 'vocabulary', 'bow', opt.vocab + '.pkl')
@@ -279,6 +284,11 @@ def main():
     video2frames = {
         x: read_dict(os.path.join(rootpath, collections[x], 'FeatureData', opt.video_feature, 'video2frames.txt'))
         for x in collections}
+    # video2frames = {
+    #     'train': None,
+    #     'val': None,
+    #     'test': None
+    # }
     # ==================================dataloader============================
     # wmy
     data_loaders = data.get_data_loaders(opt, caption_files, video_feats, img_feats, rnn_vocab, bow2vec, opt.text_net,
@@ -455,13 +465,15 @@ def train(opt, train_loader, model, epoch):
     end = time.time()
     train_loss = []
 
-    # loss_func = TripletLoss(margin=opt.margin,
-    #                         max_violation=opt.max_violation,
-    #                         cost_style=opt.cost_style,
-    #                         direction=opt.direction,
-    #                         loss_fun=opt.loss_fun).to(device)
-
-    loss_func = CrossCLR_onlyIntraModality(logger=train_logger).to(device)
+    loss_func = None
+    if opt.loss_fun == 'CrossCLR':
+        loss_func = CrossCLR_onlyIntraModality(logger=train_logger).to(device)
+    elif opt.loss_fun == 'mrl':
+        loss_func = TripletLoss(margin=opt.margin,
+                                max_violation=opt.max_violation,
+                                cost_style=opt.cost_style,
+                                direction=opt.direction,
+                                loss_fun=opt.loss_fun).to(device)
 
     print('Epoch[{0} / {1}] LR: {2}'.format(epoch, opt.num_epochs, get_learning_rate(opt.optimizer)[0]))
 
@@ -482,8 +494,11 @@ def train(opt, train_loader, model, epoch):
         brand_emb, post_emb = model(brand_ids, videos, captions)
 
         opt.optimizer.zero_grad()
-        loss = loss_func(brand_emb, post_emb)
-        # loss = loss_func(brand_ids, brand_emb, post_emb)
+        loss = None
+        if opt.loss_fun == 'CrossCLR':
+            loss = loss_func(brand_emb, post_emb)
+        elif opt.loss_fun == 'mrl':
+            loss = loss_func(brand_ids, brand_emb, post_emb)
         # loss = loss_func(brand_emb)
         train_loss.append(loss.item())
         model.logger.update('Le', loss.item(), brand_emb.size(0))

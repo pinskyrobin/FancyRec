@@ -436,7 +436,7 @@ class BrandAspects(nn.Module):
         # brand one-hot embedding
         # 升维与否此处需要调整
         # self.brand_embeddings = nn.Embedding(self.brand_num, self.common_embedding_size)
-        self.brand_embeddings = nn.Embedding(self.brand_num, self.num_aspects)
+        self.brand_embeddings = nn.Embedding(self.brand_num+1, self.num_aspects)
         # 2000*2048
         self.aspects_embeddings = nn.Parameter(torch.randn(self.num_aspects, self.common_embedding_size),
                                                requires_grad=True)

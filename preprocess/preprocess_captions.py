@@ -3,7 +3,7 @@ import random
 
 from util.util import read_dict
 import json
-from preprocess.vocab import clean_str
+from vocab import clean_str
 
 """
 对数据集中的原始文本captions进行预处理，包括图像的captions和视频的captions

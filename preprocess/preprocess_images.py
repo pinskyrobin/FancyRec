@@ -3,7 +3,7 @@ import os
 
 from util.constant import device
 from util.util import write_dict
-from preprocess.resnet152 import ResNet152
+from resnet152 import ResNet152
 import torchvision.models as models
 from mydataset import ImageDataSet
 from torch.utils.data import DataLoader

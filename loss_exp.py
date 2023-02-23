@@ -66,12 +66,13 @@ class CrossCLR_onlyIntraModality(nn.Module):
     ICCV 2021
     """
 
-    def __init__(self, temperature=0.03, negative_weight=0.8, logger=None):
+    def __init__(self, temperature=0.03, negative_weight=0.8, logger=None, cost_style='sum'):
         super(CrossCLR_onlyIntraModality, self).__init__()
         self.logit_scale = nn.Parameter(torch.ones([]))
         self.criterion = torch.nn.CrossEntropyLoss(reduction='none')
         self.temperature = temperature
         self.logger = logger
+        self.cost_style = cost_style
         self.negative_w = negative_weight  # Weight of negative samples logits.
 
     def compute_loss(self, logits, mask):
@@ -91,6 +92,25 @@ class CrossCLR_onlyIntraModality(nn.Module):
             post: Post embeddings (batch, embed_dim)
         Returns:
         """
+
+        # Calculate rank
+        _post = post.view(post.shape[0], post.shape[1], 1)
+        scores = torch.empty((brand.shape[0], brand.shape[0])).to(device)
+        for i in range(_post.shape[0]):
+            scores[i] = brand.matmul(_post[i]).squeeze()
+
+        # Return: (values, indices)
+        _, a11 = scores.sort(1, descending=True)
+        # bii[i][j] = aii[i][a11[i][j]]
+        _, b11 = a11.sort(1)
+        rank_1 = (b11.diag() + 1).float()
+        rank_p = 1 / (rank_1.shape[0] - rank_1 + 1) + 1
+
+        _, a22 = scores.sort(0, descending=True)
+        _, b22 = a22.sort(0)
+        rank_2 = (b22.diag() + 1).float()
+        rank_b = 1 / (rank_2.shape[0] - rank_2 + 1) + 1
+
         batch_size = brand.shape[0]
 
         # Normalize features
@@ -126,10 +146,10 @@ class CrossCLR_onlyIntraModality(nn.Module):
         mask_b = torch.cat([mask_brand, mask_neg_b], dim=1)
         mask_p = torch.cat([mask_post, mask_neg_p], dim=1)
 
-        loss_b = self.compute_loss(brand_logits, mask_b)
-        loss_p = self.compute_loss(post_logits, mask_p)
+        loss_b = rank_b * self.compute_loss(brand_logits, mask_b)
+        loss_p = rank_p * self.compute_loss(post_logits, mask_p)
 
-        return (loss_b.mean() + loss_p.mean()) / 2
+        return (loss_b.sum() + loss_p.sum()) / 2 if self.cost_style == 'sum' else (loss_b.mean() + loss_p.mean()) / 2
 
 
 class CrossCLR_noq(nn.Module):

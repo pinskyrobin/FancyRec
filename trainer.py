@@ -89,6 +89,8 @@ def parse_args():
     parser.add_argument('--single_modal_text', action='store_true', help='use text feature only in fusion stage.')
     parser.add_argument('--fusion_style', type=str, default='fc', help='(fc|mfb). final fusion style between visual. '
                                                                        'and text')
+    parser.add_argument('--prj_head_output', action='store_true', help='use the output after projection head'
+                                                                       'rather than before the head')
     # loss
     parser.add_argument('--loss_fun', type=str, default='mrl', help='(mrl|CrossCLR) loss function.(default: mrl)')
     parser.add_argument('--margin', type=float, default=0.2, help='rank loss margin')
@@ -400,7 +402,7 @@ def main():
         if not is_best:
             # Early stop occurs if the validation performance does not improve in ten consecutive epochs
             no_impr_counter += 1
-            if no_impr_counter > 50:
+            if no_impr_counter > 80:
                 print('Early stopping happened.\n')
                 break
 
@@ -448,7 +450,7 @@ def main():
     # os.system('./'+runfile)
 
 
-def train(opt, train_loader, model, epoch):
+def train(opt, train_loader, model, epoch, accumulation_step=8):
     # average meters to record the training statistics
     batch_time = AverageMeter()
     data_time = AverageMeter()
@@ -493,7 +495,6 @@ def train(opt, train_loader, model, epoch):
         # Update the model
         brand_emb, post_emb = model(brand_ids, videos, captions)
 
-        opt.optimizer.zero_grad()
         loss = None
         if opt.loss_fun == 'CrossCLR':
             loss = loss_func(brand_emb, post_emb)
@@ -504,9 +505,11 @@ def train(opt, train_loader, model, epoch):
         model.logger.update('Le', loss.item(), brand_emb.size(0))
 
         loss.backward()
-        if opt.grad_clip > 0:
-            clip_grad_norm_(model.parameters(), opt.grad_clip)
-        opt.optimizer.step()
+        if (i + 1) % accumulation_step == 0:
+            if opt.grad_clip > 0:
+                clip_grad_norm_(model.parameters(), opt.grad_clip)
+            opt.optimizer.step()
+            opt.optimizer.zero_grad()
 
         progbar.add(post_emb.size(0), values=[('loss', loss.item())])
 
@@ -520,6 +523,7 @@ def train(opt, train_loader, model, epoch):
         tb_logger.log_value('batch_time', batch_time.val, step=model.Eiters)
         tb_logger.log_value('data_time', data_time.val, step=model.Eiters)
         model.logger.tb_log(tb_logger, step=model.Eiters)
+        torch.cuda.empty_cache()
     return train_loss
 
 

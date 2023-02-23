@@ -24,7 +24,7 @@ margin=0.2
 # final fusion style of Visual and Text
 fusion_style=fc
 workers=8
-brand_num=52
+brand_num=51
 postfix=public_cluster
 
 cd FGMCD/bin

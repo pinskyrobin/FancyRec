@@ -10,7 +10,7 @@ concate=full # full|reduced
 overwrite=1
 num_epochs=100  # use early stopping mechanism
 text_net=bi-gru # bi-gru|transformer
-batch_size=2
+batch_size=8
 metric=auc
 n_caption=1 # how many captions in each video
 learning_rate=0.0001
@@ -23,8 +23,8 @@ common_embedding_size=1024
 margin=0.2
 # final fusion style of Visual and Text
 fusion_style=fc
-workers=0
-brand_num=52
+workers=0\2
+brand_num=51
 
 nohup python -u ../trainer.py $trainCollection $valCollection $testCollection \
   --rootpath $rootpath \
@@ -41,4 +41,4 @@ nohup python -u ../trainer.py $trainCollection $valCollection $testCollection \
   --visual_mapping_size $visual_mapping_size --margin $margin \
   --fusion_style $fusion_style \
   --max_violation
-> "/Users/pinskyrobin/Downloads/insCar/bg_training.log" 2>&1 &
+> "/Users/pinskyrobin/Downloads/insCar/bg_training.log" 2>&1

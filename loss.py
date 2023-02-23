@@ -67,7 +67,7 @@ class TripletLoss(nn.Module):
     triplet ranking loss
     """
 
-    def __init__(self, margin=0, measure=False, max_violation=False, cost_style='sum', direction='all', loss_fun='mrl'):
+    def __init__(self, margin=0, measure='cosine', max_violation=False, cost_style='sum', direction='all', loss_fun='mrl'):
         super(TripletLoss, self).__init__()
         self.margin = margin
         self.cost_style = cost_style

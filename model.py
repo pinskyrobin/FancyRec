@@ -45,13 +45,14 @@ def l2norm(X):
     return X
 
 
-def xavier_init_fc(fc):
+def xavier_init_fc(fc, bias=True):
     """Xavier initialization for the fully connected layer
     """
     r = np.sqrt(6.) / np.sqrt(fc.in_features +
                               fc.out_features)
     fc.weight.data.uniform_(-r, r)
-    fc.bias.data.fill_(0)
+    if bias:
+        fc.bias.data.fill_(0)
 
 
 # 全连接模块
@@ -68,7 +69,8 @@ class MFC(nn.Module):
         # dropout
         self.dropout = nn.Dropout(p=dropout)
         # batch normalization
-        self.bn_1 = nn.BatchNorm1d(fc_layers[1])
+        # self.bn_1 = nn.BatchNorm1d(fc_layers[1])
+        self.relu = nn.ReLU()
 
         self.init_weights()
 
@@ -80,7 +82,8 @@ class MFC(nn.Module):
     def forward(self, inputs):
         features = self.fc1(inputs)
         # batch normalization
-        features = self.bn_1(features)
+        # features = self.bn_1(features)
+        features = self.relu(features)
         features = self.dropout(features)
         return features
 
@@ -259,6 +262,7 @@ class TextTransformersEncoder(nn.Module):
         # mask = mask.to(self.device)
         # last_hidden_state,  pooler_output(cls token), hidden_states(type: tuple, one for each layer)
         # if need hidden-state outputs, set Param output_hidden_states=True
+        torch.cuda.memory_summary(device=None, abbreviated=False)
         outputs = self.model(input_ids=tokens, token_type_ids=type_ids,
                              attention_mask=mask)
         # one-hot encoding
@@ -436,7 +440,7 @@ class BrandAspects(nn.Module):
         # brand one-hot embedding
         # 升维与否此处需要调整
         # self.brand_embeddings = nn.Embedding(self.brand_num, self.common_embedding_size)
-        self.brand_embeddings = nn.Embedding(self.brand_num+1, self.num_aspects)
+        self.brand_embeddings = nn.Embedding(self.brand_num + 1, self.num_aspects)
         # 2000*2048
         self.aspects_embeddings = nn.Parameter(torch.randn(self.num_aspects, self.common_embedding_size),
                                                requires_grad=True)
@@ -544,6 +548,43 @@ class FusionEncoder(nn.Module):
         xavier_init_fc(self.fc)
 
 
+class PrjHeadFusionEncoder(nn.Module):
+    def __init__(self, opt):
+        super(PrjHeadFusionEncoder, self).__init__()
+        self.opt = opt
+
+        # final embedding dim in common space
+        self.common_embedding_size = opt.common_embedding_size
+        # visual feature dim after visual_net
+        self.visual_mapping_size = opt.visual_mapping_size[1]
+        # text feature dim after text_net
+        self.text_mapping_size = opt.text_mapping_size[1]
+
+        self.fc1 = nn.Linear(self.text_mapping_size + self.visual_mapping_size, 512, bias=False)
+        self.fc2 = nn.Linear(512, self.common_embedding_size, bias=True)
+
+        self.projection_head = nn.Sequential(
+            self.fc1,
+            nn.BatchNorm1d(512),
+            nn.ReLU(inplace=True),
+            self.fc2
+        )
+        self.init_weights()
+
+    def forward(self, visual_embs, text_embs):
+        fusion_vt = torch.cat((visual_embs, text_embs), 1)
+        if self.opt.prj_head_output:
+            return fusion_vt
+        else:
+            return self.projection_head(fusion_vt)
+
+    def init_weights(self):
+        """Xavier initialization for the fully connected layer
+        """
+        xavier_init_fc(self.fc1, bias=False)
+        xavier_init_fc(self.fc2)
+
+
 # 我们的模型结构定义
 class FGMCD(nn.Module):
 
@@ -567,7 +608,8 @@ class FGMCD(nn.Module):
             self.fusion_encoding = FusionEncoder(opt)
         elif self.fusion_style == 'mfb':
             self.fusion_encoding = MFB(opt)
-
+        elif self.fusion_style == 'ph':
+            self.fusion_encoding = PrjHeadFusionEncoder(opt)
         params1 = list(self.vid_encoding.parameters())
         params1 += list(self.text_encoding.parameters())
         params1 += list(self.brand_encoding.parameters())

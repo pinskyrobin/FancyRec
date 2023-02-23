@@ -262,7 +262,8 @@ class TextTransformersEncoder(nn.Module):
         # mask = mask.to(self.device)
         # last_hidden_state,  pooler_output(cls token), hidden_states(type: tuple, one for each layer)
         # if need hidden-state outputs, set Param output_hidden_states=True
-        torch.cuda.memory_summary(device=None, abbreviated=False)
+        if torch.cuda.is_available():
+            torch.cuda.memory_summary(device=None, abbreviated=False)
         outputs = self.model(input_ids=tokens, token_type_ids=type_ids,
                              attention_mask=mask)
         # one-hot encoding

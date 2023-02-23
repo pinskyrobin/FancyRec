@@ -220,7 +220,6 @@ def main():
     # Vocabulary object
     rnn_vocab = pickle.load(open(rnn_vocab_file, 'rb'))
     opt.vocab_size = len(rnn_vocab)
-    # print(len(rnn_vocab)) 7811
 
     # initialize word embedding
     opt.we_parameter = None
@@ -523,7 +522,8 @@ def train(opt, train_loader, model, epoch, accumulation_step=8):
         tb_logger.log_value('batch_time', batch_time.val, step=model.Eiters)
         tb_logger.log_value('data_time', data_time.val, step=model.Eiters)
         model.logger.tb_log(tb_logger, step=model.Eiters)
-        torch.cuda.empty_cache()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
     return train_loss
 
 

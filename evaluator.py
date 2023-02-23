@@ -129,6 +129,8 @@ def test_post_ranking(brand_num, metric, model, post_embs, brands):
     :param brands: all (testing set)posts' brand information
     :return:
     """
+
+    torch.cuda.empty_cache()
     aspect_model = model.brand_encoding.eval()
     # total brands are here
     brand_list = [i for i in range(brand_num)]
@@ -146,6 +148,9 @@ def test_post_ranking(brand_num, metric, model, post_embs, brands):
 
     scores = cal_sim(aspects, post_embs).data.cpu().numpy().copy()
     brands = brands.data.cpu().numpy().copy()
+
+
+    torch.cuda.empty_cache()
     # 对照实验1 随机相似度分数矩阵 # wmy
     # scores = random_sim(aspects.shape[0], post_embs.shape[1])
     if metric == 'auc':

@@ -1,5 +1,6 @@
 # build train/validate/test dir
-cd /root/pinskyrobin/mini_insCar/@@@vertical@@@
+#cd /root/pinskyrobin/mini_insCar/@@@vertical@@@
+cd /data1/data/brand/@@@dataset_name@@@/@@@vertical@@@
 mkdir -p @@@vertical@@@train/FeatureData
 mkdir -p @@@vertical@@@val/FeatureData
 mkdir -p @@@vertical@@@test/FeatureData

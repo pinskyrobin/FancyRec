@@ -1,6 +1,6 @@
-rootpath=/root/pinskyrobin/mini_insCar/@@@vertical@@@
+#rootpath=/root/pinskyrobin/insCar/@@@vertical@@@
+rootpath=/data1/data/brand/@@@dataset_name@@@/@@@vertical@@@
 collection=@@@collection@@@
-# msrvtt10ktrain
 threshold=5
 overwrite=1
 for text_style in bow rnn

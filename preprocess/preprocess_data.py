@@ -10,12 +10,11 @@ from preprocess_captions import extract_image_captions, extract_video_captions, 
     videos_split_train_val_test, merge_captions_in_videos_and_imgs
 
 
-def get_verticals():
+def get_verticals(data_file_path="/root/subbrand_dataset/label.csv"):
     """
     现有数据包含10个垂直领域
     :return:
     """
-    data_file_path = "/root/subbrand_dataset/label.csv"
     data_points = pd.read_csv(data_file_path).values
     # print(len(data_points)) # 193
     # print(data_points[0]) # ['auto' 'bmw' 'bmw' 0 0 0]
@@ -30,13 +29,14 @@ def get_verticals():
     write_dict(verticals_file, verticals)
 
 
-def get_datas_from_each_vertical(get_video=True, get_image=True):
+def get_datas_from_each_vertical(get_video=True, get_image=True,
+                                 _vertical='insCar', dataset_name='insCar',
+                                 target_root_path='/root/pinskyrobin/',
+                                 source_root_path='/root/brand/ins_Car_data'):
     """
     整理出每个垂直领域的数据及特征 保存到相应目录
     :return:
     """
-    target_root_path = '/root/pinskyrobin/'
-    source_root_path = '/root/brand/ins_Car_data'
     verticals = read_dict(os.path.abspath(os.path.join(os.getcwd(), "..", "out", "cls.txt")))
     script_path = os.path.abspath(os.path.join(os.getcwd(), "..", "bin"))
 
@@ -56,11 +56,11 @@ def get_datas_from_each_vertical(get_video=True, get_image=True):
         # 原视频目录
         videos_path = [os.path.join(source_root_path, brand) for brand in brands]
         # 帧数据存放目录
-        frames_save_path = os.path.join(target_root_path, 'insCar', "frames")
+        frames_save_path = os.path.join(target_root_path, dataset_name, "frames")
         # 切帧
         video2frame(source_root_path, videos_path, frames_save_path)
         # 视频与id的映射
-        video2idx_and_idx2video(source_root_path, videos_path, 'insCar')
+        video2idx_and_idx2video(source_root_path, videos_path, _vertical)
         # 将无效帧剔除
         for index, frame_name in enumerate(os.listdir(frames_save_path)):
             print('检查第{}个帧'.format(index))
@@ -72,7 +72,7 @@ def get_datas_from_each_vertical(get_video=True, get_image=True):
         二、提取视频特征
         """
         # 特征保存目录
-        frame_feat_save_path = os.path.join(target_root_path, 'insCar')
+        frame_feat_save_path = os.path.join(target_root_path, dataset_name)
         # 特征保存格式txt
         extract(frames_save_path, frame_feat_save_path)
         # ####################################################################################
@@ -97,7 +97,7 @@ def get_datas_from_each_vertical(get_video=True, get_image=True):
         images_path = [os.path.join(source_root_path, brand) for brand in brands]
         images_list = obtain_images(source_root_path, images_path, threshold=200)
         # # 图像特征保存的目录
-        img_feat_save_path = os.path.join(target_root_path, 'insCar')
+        img_feat_save_path = os.path.join(target_root_path, dataset_name)
         extract_images_features(source_root_path, images_list, img_feat_save_path)
         # ####################################################################################
         """
@@ -110,16 +110,16 @@ def get_datas_from_each_vertical(get_video=True, get_image=True):
         over_write = 1
         process(feat_dim, input_text_file, bin_feat_dir, over_write)
         # 获取图像名到id的映射
-        img2idx_and_idx2img(source_root_path, images_path, 'insCar')
+        img2idx_and_idx2img(source_root_path, images_path, _vertical)
 
     ####################################################################################
     """
     六、获取视频和图像的captions
     """
     if get_video:
-        extract_video_captions(source_root_path, videos_path, 'insCar')
+        extract_video_captions(source_root_path, videos_path, _vertical)
     if get_image:
-        extract_image_captions(source_root_path, images_path, 'insCar')
+        extract_image_captions(source_root_path, images_path, _vertical)
     # ####################################################################################
     """
 
@@ -127,20 +127,21 @@ def get_datas_from_each_vertical(get_video=True, get_image=True):
     """
     # 划分视频和相应captions
     if get_video:
-        videos_split_train_val_test(source_root_path, target_root_path, 'insCar', videos_path)
+        videos_split_train_val_test(source_root_path, target_root_path, dataset_name, videos_path)
     # 划分图像和相应的captions
     if get_image:
-        imgs_split_train_val_test(source_root_path, target_root_path, 'insCar', images_path, threshold=200)
+        imgs_split_train_val_test(source_root_path, target_root_path, dataset_name, images_path, threshold=200)
     # 视觉模态、文本模态相应数据合并
-    merge_captions_in_videos_and_imgs(target_root_path, 'insCar')
+    merge_captions_in_videos_and_imgs(target_root_path, dataset_name)
     ####################################################################################
     """
     八、生成数据集的词文件 (用于one-hot)
     """
     commandStr = ''.join(
         open(os.path.join(script_path, 'template_do_get_vertical_vocab.sh'), 'r', encoding='utf8').readlines())
-    commandStr = commandStr.replace("@@@vertical@@@", 'insCar')
-    commandStr = commandStr.replace("@@@collection@@@", 'insCar' + 'train')
+    commandStr = commandStr.replace("@@@vertical@@@", _vertical)
+    commandStr = commandStr.replace("@@@collection@@@", _vertical + 'train')
+    commandStr = commandStr.replace("@@@dataset_name@@@", dataset_name)
     print(commandStr)
     file = os.path.join(script_path, 'do_get_vertical_vocab.sh')
     open(file, 'w', encoding='utf8').write(commandStr + '\n')
@@ -151,7 +152,8 @@ def get_datas_from_each_vertical(get_video=True, get_image=True):
     九、最终整理
     """
     commandStr = ''.join(open(os.path.join(script_path, "template_construct_dir.sh"), 'r', encoding='utf8').readlines())
-    commandStr = commandStr.replace("@@@vertical@@@", 'insCar')
+    commandStr = commandStr.replace("@@@vertical@@@", _vertical)
+    commandStr = commandStr.replace("@@@dataset_name@@@", dataset_name)
     print(commandStr)
     runfile = os.path.join(script_path, "construct_train_val_test_dir.sh")
     open(runfile, 'w', encoding='utf8').write(commandStr + '\n')
@@ -161,6 +163,9 @@ def get_datas_from_each_vertical(get_video=True, get_image=True):
 
 
 if __name__ == '__main__':
-    video = False
+    video = True
     image = True
-    get_datas_from_each_vertical(video, image)
+    get_datas_from_each_vertical(video, image,
+                                 _vertical='insCar', dataset_name='insCar_ViT',
+                                 source_root_path='/data1/data/brand',
+                                 target_root_path='/data1/data/brand')

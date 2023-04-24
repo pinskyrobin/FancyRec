@@ -4,7 +4,8 @@ valCollection=insCarval
 testCollection=insCartest
 video_feature=resnet152_dim_2048  # where the videos feature file saved
 img_feature=imgfeat_dim_2048 # where the images feature file saved
-loss_fun=cl # mrl|CrossCLR
+loss_fun=cl # mrl|CrossCLR|cl
+cost_style=sum
 # 多级特征的拼接方式
 concate=full # full|reduced
 overwrite=1

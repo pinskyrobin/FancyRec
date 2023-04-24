@@ -133,6 +133,7 @@ class VisualEncoder(nn.Module):
         self.dropout = nn.Dropout(p=opt.dropout)
         self.visual_norm = opt.visual_norm
         self.concate = opt.concate
+        self.attn = (opt.fusion_style == 'attn')
 
         # visual bidirectional rnn encoder
         self.rnn = nn.GRU(
@@ -149,11 +150,12 @@ class VisualEncoder(nn.Module):
             for window_size in opt.visual_kernel_sizes
         ])
 
-        # visual mapping
-        self.visual_mapping = MFC(opt.visual_mapping_size, opt.dropout)
+        if not self.attn:
+            # visual mapping
+            self.visual_mapping = MFC(opt.visual_mapping_size, opt.dropout)
 
         # 添加注意力机制的部分
-        self.fc = nn.Linear(opt.visual_feat_dim, opt.visual_feat_dim)
+        # self.fc = nn.Linear(opt.visual_feat_dim, opt.visual_feat_dim)
 
     def forward(self, videos):
         """Extract video_frames feature vectors."""
@@ -192,7 +194,8 @@ class VisualEncoder(nn.Module):
         # concatenation
         features = None
         if self.concate == 'full':  # level 1+2+3
-            features = torch.cat((gru_out, con_out, org_out, output), 1)  # size (64L, 8192L)
+            # features = torch.cat((gru_out, con_out, org_out, output), 1)  # size (64L, 8192L)
+            features = torch.cat((gru_out, con_out, output), 1)  # size (64L, 8192L)
         elif self.concate == 'reduced':  # wmy
             # level 2+3
             features = torch.cat((gru_out, con_out, output), 1)  # 6144
@@ -207,10 +210,12 @@ class VisualEncoder(nn.Module):
             # level 3
             # features = con_out
         # print("before FC visual feature dim", features.size())
+
         # mapping to common space
-        features = self.visual_mapping(features)
-        if self.visual_norm:
-            features = l2norm(features)
+        if not self.attn:
+            features = self.visual_mapping(features)
+            if self.visual_norm:
+                features = l2norm(features)
 
         return features
 
@@ -239,6 +244,7 @@ class TextTransformersEncoder(nn.Module):
         self.text_norm = opt.text_norm
         self.hidden_size = opt.text_transformers_hidden_size
         self.concate = opt.concate
+        self.attn = (opt.fusion_style == 'attn')
         # initial bert model
         # modify the default configuration
         self.configuration = BertConfig(num_hidden_layers=3, num_attention_heads=12)
@@ -250,8 +256,10 @@ class TextTransformersEncoder(nn.Module):
             nn.Conv2d(1, opt.text_kernel_num, (window_size, self.hidden_size), padding=(window_size - 1, 0))
             for window_size in opt.text_kernel_sizes
         ])
-        # multi fc layers
-        self.text_mapping = MFC(opt.text_mapping_size, opt.dropout)
+
+        if not self.attn:
+            # multi fc layers
+            self.text_mapping = MFC(opt.text_mapping_size, opt.dropout)
         # dropout
         self.dropout = nn.Dropout(p=opt.dropout)
 
@@ -281,21 +289,23 @@ class TextTransformersEncoder(nn.Module):
         #     average_last_2_layers[i] = torch.mean(batch[:int(torch.sum(mask[i]))], 0)
 
         # OUTPUT of TRANSFORMERS (without intermediate states)
-        last_hidden = outputs[0]
-        tf_out = torch.zeros(len(tokens), self.hidden_size).to(device)
+        last_hidden = outputs[0]  # Tensor (batch_size: 8, sequence_length: 154, hidden_size: 768)
+        tf_out = torch.zeros(len(tokens), self.hidden_size).to(device)  # Tensor (batch_size: 8, hidden_size: 768)
         for i, batch in enumerate(last_hidden):
             tf_out[i] = torch.mean(batch[:int(torch.sum(mask[i]))], 0)
 
         # features by CNN
-        con_out = last_hidden.unsqueeze(1)
-        con_out = [F.relu(conv(con_out)).squeeze(3) for conv in self.convs1]
-        con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]
-        con_out = torch.cat(con_out, 1)
-        con_out = self.dropout(con_out)
+        con_out = last_hidden.unsqueeze(1)  # Tensor (batch_size: 8, 1, sequence_length: 154, hidden_size: 768)
+        con_out = [F.relu(conv(con_out)).squeeze(3) for conv in
+                   self.convs1]  # List (3 * Tensor (batch_size: 8, ch: 512, sequence_length: 154: 768))
+        con_out = [F.max_pool1d(i, i.size(2)).squeeze(2) for i in con_out]  # List (3 * Tensor (batch_size: 8, ch: 512))
+        con_out = torch.cat(con_out, 1)  # Tensor (batch_size: 8, ch: 512 * 3)
+        con_out = self.dropout(con_out)  # Tensor (batch_size: 8, ch: 512 * 3)
         # concatenation
         features = None
         if self.concate == 'full':  # level 1+2+3  4318+768+1536
-            features = torch.cat((org_out, tf_out, con_out), 1)
+            # features = torch.cat((org_out, tf_out, con_out), 1)
+            features = torch.cat((tf_out, con_out), 1)
         elif self.concate == 'reduced':
             # level 2+3
             features = torch.cat((tf_out, con_out), 1)
@@ -303,9 +313,10 @@ class TextTransformersEncoder(nn.Module):
             # features = torch.cat((org_out, con_out), 1)
 
         # mapping to common space
-        features = self.text_mapping(features)
-        if self.text_norm:
-            features = l2norm(features)
+        if not self.attn:
+            features = self.text_mapping(features)
+            if self.text_norm:
+                features = l2norm(features)
 
         return features
 
@@ -325,6 +336,8 @@ class TextEncoder(nn.Module):
         self.rnn_output_size = opt.text_rnn_size * 2
         self.dropout = nn.Dropout(p=opt.dropout)
         self.concate = opt.concate
+        self.attn = (opt.fusion_style == 'attn')
+
         self.embed = nn.Embedding(opt.vocab_size, opt.word_dim)
         self.rnn = nn.GRU(
             opt.word_dim,
@@ -338,8 +351,9 @@ class TextEncoder(nn.Module):
             for window_size in opt.text_kernel_sizes
         ])
 
-        # multi fc layers
-        self.text_mapping = MFC(opt.text_mapping_size, opt.dropout)
+        if not self.attn:
+            # multi fc layers
+            self.text_mapping = MFC(opt.text_mapping_size, opt.dropout)
 
         self.init_weights()
 
@@ -387,7 +401,8 @@ class TextEncoder(nn.Module):
         # concatenation
         features = None
         if self.concate == 'full':  # level 1+2+3
-            features = torch.cat((org_out, gru_out, con_out), 1)  #
+            # features = torch.cat((org_out, gru_out, con_out), 1)
+            features = torch.cat((gru_out, con_out), 1)
         elif self.concate == 'reduced':  # wmy
             # level 2+3
             features = torch.cat((gru_out, con_out), 1)
@@ -403,9 +418,10 @@ class TextEncoder(nn.Module):
             # features = con_out
 
         # mapping to common space
-        features = self.text_mapping(features)
-        if self.text_norm:
-            features = l2norm(features)
+        if not self.attn:
+            features = self.text_mapping(features)
+            if self.text_norm:
+                features = l2norm(features)
 
         return features
 
@@ -437,7 +453,7 @@ class BrandAspects(nn.Module):
         self.brand_num = opt.brand_num
         # final embedding dim in common space
         self.common_embedding_size = opt.common_embedding_size
-        self.num_aspects = 2000
+        self.num_aspects = opt.brand_aspect
         # brand one-hot embedding
         # 升维与否此处需要调整
         # self.brand_embeddings = nn.Embedding(self.brand_num, self.common_embedding_size)
@@ -549,6 +565,7 @@ class FusionEncoder(nn.Module):
         xavier_init_fc(self.fc)
 
 
+# Inspired by SimCLR model
 class PrjHeadFusionEncoder(nn.Module):
     def __init__(self, opt):
         super(PrjHeadFusionEncoder, self).__init__()
@@ -567,7 +584,7 @@ class PrjHeadFusionEncoder(nn.Module):
         self.projection_head = nn.Sequential(
             self.fc1,
             nn.BatchNorm1d(512),
-            nn.ReLU(inplace=True),
+            nn.ReLU(),
             self.fc2
         )
         self.init_weights()
@@ -586,23 +603,83 @@ class PrjHeadFusionEncoder(nn.Module):
         xavier_init_fc(self.fc2)
 
 
+# Inspired by Paper "Learning Alignment for Multimodal Emotion Recognition from Speech"
+class AttnReductionFusionEncoder(nn.Module):
+
+    def __init__(self, opt):
+        super(AttnReductionFusionEncoder, self).__init__()
+        self.opt = opt
+
+        # final embedding dim in common space
+        self.common_embedding_size = opt.common_embedding_size
+        # visual feature dim after visual_net
+        self.visual_mapping_size = opt.visual_mapping_size[0]
+        # text feature dim after text_net
+        self.text_mapping_size = opt.text_mapping_size[0]
+
+        # alpha = softmax(tanh(W1*visual_embs + W2*text_embs + b))
+        # alpha size: (batch_size, text_mapping_size, visual_mapping_size)
+        # visual_embs size: (batch_size, visual_mapping_size)
+        # text_embs size: (batch_size, text_mapping_size)
+        self.vis_linear = nn.Linear(1, self.text_mapping_size, bias=False)
+        self.text_linear = nn.Linear(1, self.visual_mapping_size, bias=False)
+        self.b = nn.Parameter(torch.zeros(self.visual_mapping_size))
+        self.tanh = nn.Tanh()
+        self.relu = nn.ReLU()
+        self.softmax = nn.Softmax(dim=1)
+
+        self.fusion_visual_linear = nn.Linear(self.text_mapping_size, self.common_embedding_size)
+        self.fusion_text_linear = nn.Linear(self.visual_mapping_size, self.common_embedding_size)
+
+        # fusion_vt = W3 * (alpha * visual_embs) + W4 * ((1-alpha) * text_embs)^T
+        # self.fusion_linear = nn.Linear(self.text_mapping_size, self.common_embedding_size)
+
+    def forward(self, visual_embs, text_embs):
+        _visual_embs = visual_embs.unsqueeze(2)  # (batch_size * v_size * 1)
+        _text_embs = text_embs.unsqueeze(2)  # (batch_size * t_size * 1)
+
+        visual_attn = self.vis_linear(_visual_embs).transpose(1, 2)  # (batch_size * t_size * v_size)
+        text_attn = self.text_linear(_text_embs)  # (batch_size * t_size * v_size)
+
+        alpha = self.softmax(self.tanh(visual_attn + text_attn + self.b))  # (batch_size * t_size * v_size)
+
+        _visual_embs = visual_embs.unsqueeze(1).repeat(1, self.text_mapping_size, 1)  # (batch_size * t_size * v_size)
+        _text_embs = text_embs.unsqueeze(1).repeat(1, self.visual_mapping_size, 1)  # (batch_size * v_size * t_size)
+
+        visual_score = torch.sum(alpha * _visual_embs, dim=2)  # (batch_size * t_size)
+        text_score = torch.sum(alpha.transpose(1, 2) * _text_embs, dim=2)  # (batch_size * v_size)
+
+        score = torch.sum(alpha * _visual_embs, dim=2)  # (batch_size * t_size)
+        fusion_vt = self.relu(self.fusion_visual_linear(visual_score) + self.fusion_text_linear(text_score))
+
+        # fusion_vt = self.fusion_linear(score)  # (batch_size * common_embedding_size)
+
+        return fusion_vt
+
+
 # 我们的模型结构定义
 class FGMCD(nn.Module):
 
     def __init__(self, opt):
         # Build Models
         super(FGMCD, self).__init__()
+        self.opt = opt
         # brand net
         self.brand_encoding = BrandAspects(opt)
+        params1 = list(self.brand_encoding.parameters())
         # visual net
-        self.vid_encoding = VisualEncoder(opt)
+        if not opt.single_modal_text:
+            self.vid_encoding = VisualEncoder(opt)
+            params1 += list(self.vid_encoding.parameters())
         # text net
-        self.text_encoding = None
-        self.text_net = opt.text_net
-        if self.text_net == 'bi-gru':
-            self.text_encoding = TextEncoder(opt)
-        elif self.text_net == 'transformers':
-            self.text_encoding = TextTransformersEncoder(opt)
+        if not opt.single_modal_visual:
+            self.text_encoding = None
+            self.text_net = opt.text_net
+            if self.text_net == 'bi-gru':
+                self.text_encoding = TextEncoder(opt)
+            elif self.text_net == 'transformers':
+                self.text_encoding = TextTransformersEncoder(opt)
+            params1 += list(self.text_encoding.parameters())
         # fusion net
         self.fusion_style = opt.fusion_style
         if self.fusion_style == 'fc':
@@ -611,9 +688,8 @@ class FGMCD(nn.Module):
             self.fusion_encoding = MFB(opt)
         elif self.fusion_style == 'ph':
             self.fusion_encoding = PrjHeadFusionEncoder(opt)
-        params1 = list(self.vid_encoding.parameters())
-        params1 += list(self.text_encoding.parameters())
-        params1 += list(self.brand_encoding.parameters())
+        elif self.fusion_style == 'attn':
+            self.fusion_encoding = AttnReductionFusionEncoder(opt)
         params1 += list(self.fusion_encoding.parameters())
         self.params1 = params1
 
@@ -622,13 +698,19 @@ class FGMCD(nn.Module):
     def forward(self, brand_ids, videos, captions):
         # extract and fuse features
         brand_embs = self.embed_brand(brand_ids)
-        vid_emb = self.embed_vis(videos)
-        cap_emb = self.embed_txt(captions)
-        # cap_emb = nn.parallel.data_parallel(self.text_encoding, inputs=text_data, device_ids=[0, 1, 2, 3, 4])
-        # vid_emb = nn.parallel.data_parallel(self.vid_encoding, inputs=videos_data, device_ids=[0, 1, 2, 3, 4])
 
-        # post_embs = torch.cat((vid_emb, cap_emb), 1)
-        post_embs = self.fusion_encoding(vid_emb, cap_emb)
+        if self.opt.single_modal_visual:
+            post_embs = self.embed_vis(videos)
+        elif self.opt.single_modal_text:
+            post_embs = self.embed_txt(captions)
+        else:
+            vid_emb = self.embed_vis(videos)
+            cap_emb = self.embed_txt(captions)
+            # cap_emb = nn.parallel.data_parallel(self.text_encoding, inputs=text_data, device_ids=[0, 1, 2, 3, 4])
+            # vid_emb = nn.parallel.data_parallel(self.vid_encoding, inputs=videos_data, device_ids=[0, 1, 2, 3, 4])
+
+            # post_embs = torch.cat((vid_emb, cap_emb), 1)
+            post_embs = self.fusion_encoding(vid_emb, cap_emb)
 
         # post represented as single modal
         # post_embs = cap_emb

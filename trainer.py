@@ -12,10 +12,10 @@ from torch.nn.utils import clip_grad_norm_
 
 import evaluator
 import util.data_provider as data
-from loss import TripletLoss
-from loss_exp import CrossCLR_onlyIntraModality
+from loss import LabLoss, TripletLoss
+from loss_exp import CrossCLR_onlyIntraModality, ContrastiveLoss
 from preprocess.text2vec import get_text_encoder
-from preprocess.vocab import Vocabulary
+from preprocess.vocab import Vocabulary  # necessary!
 
 import logging
 import tensorboard_logger as tb_logger
@@ -54,6 +54,7 @@ def parse_args():
     parser.add_argument('--dropout', default=0.2, type=float, help='dropout rate (default: 0.2)')
     # brand
     parser.add_argument('--brand_num', type=int, default=52, help='total brand numbers. default:51')
+    parser.add_argument('--brand_aspect', type=int, default=2000, help='brand aspect numbers. default:2000')
     # text-side multi-level encoding
     parser.add_argument('--vocab', type=str, default='word_vocab_5', help='word vocabulary. (default: word_vocab_5)')
     parser.add_argument('--word_dim', type=int, default=500, help='word embedding dimension')
@@ -109,6 +110,7 @@ def parse_args():
     # misc
     parser.add_argument('--num_epochs', default=100, type=int, help='Number of training epochs.')
     parser.add_argument('--batch_size', default=128, type=int, help='Size of a training mini-batch.')
+    parser.add_argument('--accumulation_step', default=8, type=int, help='Number of gradient accumulation steps.')
     parser.add_argument('--workers', default=0, type=int, help='Number of data loader workers.')
     parser.add_argument('--postfix', default='runs_0', help='Path to save the model and Tensorboard log.')
     parser.add_argument('--log_step', default=10, type=int, help='Number of steps to print and record the log.')
@@ -223,11 +225,11 @@ def main():
 
     # initialize word embedding
     opt.we_parameter = None
-    if opt.word_dim == 500:
-        # 用flickr的词库来做词向量
-        w2v_data_path = os.path.join(rootpath, "word2vec", 'flickr', 'vec500flickr30m')
-        # 将自己词袋中的词做成词向量
-        opt.we_parameter = get_we_parameter(rnn_vocab, w2v_data_path)  # 获得每个词的向量表示
+    # if opt.word_dim == 500:
+    #     # 用flickr的词库来做词向量
+    #     w2v_data_path = os.path.join(rootpath, "word2vec", 'flickr', 'vec500flickr30m')
+    #     # 将自己词袋中的词做成词向量
+    #     opt.we_parameter = get_we_parameter(rnn_vocab, w2v_data_path)  # 获得每个词的向量表示
 
     # mapping layer structure [0,2048]
     opt.text_mapping_size = [0, opt.text_mapping_size]
@@ -236,16 +238,21 @@ def main():
     if opt.concate == 'full':  # 多级特征的拼接方式
         # 最终concat得到的文本特征dim
         if opt.text_net == 'bi-gru':
-            opt.text_mapping_size[0] = opt.bow_vocab_size + opt.text_rnn_size * 2 + \
-                                       opt.text_kernel_num * len(
-                opt.text_kernel_sizes)
+            # opt.text_mapping_size[0] = opt.bow_vocab_size + opt.text_rnn_size * 2 + \
+            #                            opt.text_kernel_num * len(
+            #     opt.text_kernel_sizes)
+            opt.text_mapping_size[0] = opt.text_rnn_size * 2 + opt.text_kernel_num * len(opt.text_kernel_sizes)
             # print(opt.text_mapping_layers[0])  # 6878
         elif opt.text_net == 'transformers':
-            opt.text_mapping_size[0] = opt.bow_vocab_size + opt.text_transformers_hidden_size + \
+            # opt.text_mapping_size[0] = opt.bow_vocab_size + opt.text_transformers_hidden_size + \
+            #                            opt.text_kernel_num * len(opt.text_kernel_sizes)
+            opt.text_mapping_size[0] = opt.text_transformers_hidden_size + \
                                        opt.text_kernel_num * len(opt.text_kernel_sizes)
 
         # 最终concat得到的视觉特征dim
-        opt.visual_mapping_size[0] = opt.visual_feat_dim * 2 + opt.visual_rnn_size * 2 + \
+        # opt.visual_mapping_size[0] = opt.visual_feat_dim * 2 + opt.visual_rnn_size * 2 + \
+        #                              opt.visual_kernel_num * len(opt.visual_kernel_sizes)
+        opt.visual_mapping_size[0] = opt.visual_feat_dim + opt.visual_rnn_size * 2 + \
                                      opt.visual_kernel_num * len(opt.visual_kernel_sizes)
 
     # 如果是reduced的话 这里设置投影矩阵的维度要复杂一些
@@ -263,7 +270,9 @@ def main():
             # level 1+3
             # opt.text_mapping_size[0] = 5854
             # level 2+3
-            opt.text_mapping_size[0] = 2560
+            # opt.text_mapping_size[0] = 2560
+            # level 2
+            opt.text_mapping_size[0] = 1024
 
         elif opt.text_net == 'transformers':
             opt.text_mapping_size[0] = opt.text_transformers_hidden_size + opt.text_kernel_num * len(
@@ -298,6 +307,14 @@ def main():
 
     # Construct the model
     model = FGMCD(opt).to(device)
+
+    # # print the name of each layer and the number of parameters
+    # for name, param in model.named_parameters():
+    #     print(name, param.numel())
+    #
+    # total_num = sum(p.numel() for p in model.parameters())
+    # trainable_num = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # print({'Total': total_num, 'Trainable': trainable_num})
 
     # parallel
     # model = torch.nn.DataParallel(model, device_ids=[0, 1, 2, 3])
@@ -338,7 +355,7 @@ def main():
     test_auc = []
     for epoch in range(opt.num_epochs):
         # train for one epoch
-        train_loss = train(opt, data_loaders['train'], model, epoch)
+        train_loss = train(opt, data_loaders['train'], model, epoch, accumulation_step=opt.accumulation_step)
         total_loss.extend(train_loss)
 
         # evaluate on validation set
@@ -456,10 +473,15 @@ def train(opt, train_loader, model, epoch, accumulation_step=8):
     train_logger = LogCollector()
 
     # switch to train mode
-    model.vid_encoding.train()
-    model.text_encoding.train()
     model.brand_encoding.train()
-    model.fusion_encoding.train()
+    if opt.single_modal_text:
+        model.text_encoding.train()
+    elif opt.single_modal_visual:
+        model.vid_encoding.train()
+    else:
+        model.vid_encoding.train()
+        model.text_encoding.train()
+        model.fusion_encoding.train()
 
     # optimize brand-net first
     progbar = Progbar(len(train_loader.dataset))
@@ -475,6 +497,10 @@ def train(opt, train_loader, model, epoch, accumulation_step=8):
                                 cost_style=opt.cost_style,
                                 direction=opt.direction,
                                 loss_fun=opt.loss_fun).to(device)
+    elif opt.loss_fun == 'cl':
+        loss_func = ContrastiveLoss(opt=opt).to(device)
+    elif opt.loss_fun == 'lab':
+        loss_func = LabLoss()
 
     print('Epoch[{0} / {1}] LR: {2}'.format(epoch, opt.num_epochs, get_learning_rate(opt.optimizer)[0]))
 
@@ -499,11 +525,15 @@ def train(opt, train_loader, model, epoch, accumulation_step=8):
             loss = loss_func(brand_emb, post_emb)
         elif opt.loss_fun == 'mrl':
             loss = loss_func(brand_ids, brand_emb, post_emb)
+        elif opt.loss_fun == 'cl':
+            loss = loss_func(brand_emb, post_emb)
+        elif opt.loss_fun == 'lab':
+            loss = loss_func(brand_emb)
         # loss = loss_func(brand_emb)
         train_loss.append(loss.item())
         model.logger.update('Le', loss.item(), brand_emb.size(0))
 
-        loss.backward()
+        loss.backward(retain_graph=True)
         if (i + 1) % accumulation_step == 0:
             if opt.grad_clip > 0:
                 clip_grad_norm_(model.parameters(), opt.grad_clip)

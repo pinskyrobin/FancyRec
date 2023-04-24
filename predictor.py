@@ -89,10 +89,15 @@ def main():
     model = FGMCD(options)
     model.load_state_dict(checkpoint['model'])
 
-    model.vid_encoding.eval()
-    model.text_encoding.eval()
     model.brand_encoding.eval()
-    model.fusion_encoding.eval()
+    if opt.single_modal_text:
+        model.text_encoding.eval()
+    elif opt.single_modal_visual:
+        model.vid_encoding.eval()
+    else:
+        model.vid_encoding.eval()
+        model.text_encoding.eval()
+        model.fusion_encoding.eval()
 
     trainCollection = options.trainCollection
     valCollection = options.valCollection

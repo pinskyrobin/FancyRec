@@ -66,10 +66,15 @@ def encode_data(model, data_loader, log_step=10, logging=print):
     val_logger = LogCollector()
 
     # switch to evaluate mode
-    model.vid_encoding.eval()
-    model.text_encoding.eval()
     model.brand_encoding.eval()
-    model.fusion_encoding.eval()
+    if model.opt.single_modal_text:
+        model.text_encoding.eval()
+    elif model.opt.single_modal_visual:
+        model.vid_encoding.eval()
+    else:
+        model.vid_encoding.eval()
+        model.text_encoding.eval()
+        model.fusion_encoding.eval()
 
     end = time.time()
 

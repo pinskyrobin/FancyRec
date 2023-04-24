@@ -238,22 +238,22 @@ def main():
     if opt.concate == 'full':  # 多级特征的拼接方式
         # 最终concat得到的文本特征dim
         if opt.text_net == 'bi-gru':
-            # opt.text_mapping_size[0] = opt.bow_vocab_size + opt.text_rnn_size * 2 + \
-            #                            opt.text_kernel_num * len(
-            #     opt.text_kernel_sizes)
-            opt.text_mapping_size[0] = opt.text_rnn_size * 2 + opt.text_kernel_num * len(opt.text_kernel_sizes)
+            opt.text_mapping_size[0] = opt.bow_vocab_size + opt.text_rnn_size * 2 + \
+                                       opt.text_kernel_num * len(
+                opt.text_kernel_sizes)
+            # opt.text_mapping_size[0] = opt.text_rnn_size * 2 + opt.text_kernel_num * len(opt.text_kernel_sizes)
             # print(opt.text_mapping_layers[0])  # 6878
         elif opt.text_net == 'transformers':
-            # opt.text_mapping_size[0] = opt.bow_vocab_size + opt.text_transformers_hidden_size + \
-            #                            opt.text_kernel_num * len(opt.text_kernel_sizes)
-            opt.text_mapping_size[0] = opt.text_transformers_hidden_size + \
+            opt.text_mapping_size[0] = opt.bow_vocab_size + opt.text_transformers_hidden_size + \
                                        opt.text_kernel_num * len(opt.text_kernel_sizes)
+            # opt.text_mapping_size[0] = opt.text_transformers_hidden_size + \
+            #                            opt.text_kernel_num * len(opt.text_kernel_sizes)
 
         # 最终concat得到的视觉特征dim
-        # opt.visual_mapping_size[0] = opt.visual_feat_dim * 2 + opt.visual_rnn_size * 2 + \
-        #                              opt.visual_kernel_num * len(opt.visual_kernel_sizes)
-        opt.visual_mapping_size[0] = opt.visual_feat_dim + opt.visual_rnn_size * 2 + \
+        opt.visual_mapping_size[0] = opt.visual_feat_dim * 2 + opt.visual_rnn_size * 2 + \
                                      opt.visual_kernel_num * len(opt.visual_kernel_sizes)
+        # opt.visual_mapping_size[0] = opt.visual_feat_dim + opt.visual_rnn_size * 2 + \
+        #                              opt.visual_kernel_num * len(opt.visual_kernel_sizes)
 
     # 如果是reduced的话 这里设置投影矩阵的维度要复杂一些
     # 因为跟具体的reduced方式有关, reduced可以是以下这几种：
@@ -270,11 +270,14 @@ def main():
             # level 1+3
             # opt.text_mapping_size[0] = 5854
             # level 2+3
-            # opt.text_mapping_size[0] = 2560
+            # opt.text_mapping_size[0] = opt.text_rnn_size * 2 + opt.text_kernel_num * len(opt.text_kernel_sizes)
             # level 2
             opt.text_mapping_size[0] = 1024
 
         elif opt.text_net == 'transformers':
+            # level 2+3
+            # opt.text_mapping_size[0] = opt.text_transformers_hidden_size + \
+            #                            opt.text_kernel_num * len(opt.text_kernel_sizes)
             opt.text_mapping_size[0] = opt.text_transformers_hidden_size + opt.text_kernel_num * len(
                 opt.text_kernel_sizes)
             # opt.text_mapping_size[0] = opt.bow_vocab_size + opt.text_transformers_hidden_size + \
@@ -533,7 +536,7 @@ def train(opt, train_loader, model, epoch, accumulation_step=8):
         train_loss.append(loss.item())
         model.logger.update('Le', loss.item(), brand_emb.size(0))
 
-        loss.backward(retain_graph=True)
+        loss.backward()
         if (i + 1) % accumulation_step == 0:
             if opt.grad_clip > 0:
                 clip_grad_norm_(model.parameters(), opt.grad_clip)

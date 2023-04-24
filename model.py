@@ -194,8 +194,8 @@ class VisualEncoder(nn.Module):
         # concatenation
         features = None
         if self.concate == 'full':  # level 1+2+3
-            # features = torch.cat((gru_out, con_out, org_out, output), 1)  # size (64L, 8192L)
-            features = torch.cat((gru_out, con_out, output), 1)  # size (64L, 8192L)
+            features = torch.cat((gru_out, con_out, org_out, output), 1)  # size (64L, 8192L)
+            # features = torch.cat((gru_out, con_out, output), 1)  # size (64L, 8192L)
         elif self.concate == 'reduced':  # wmy
             # level 2+3
             features = torch.cat((gru_out, con_out, output), 1)  # 6144
@@ -304,8 +304,8 @@ class TextTransformersEncoder(nn.Module):
         # concatenation
         features = None
         if self.concate == 'full':  # level 1+2+3  4318+768+1536
-            # features = torch.cat((org_out, tf_out, con_out), 1)
-            features = torch.cat((tf_out, con_out), 1)
+            features = torch.cat((org_out, tf_out, con_out), 1)
+            # features = torch.cat((tf_out, con_out), 1)
         elif self.concate == 'reduced':
             # level 2+3
             features = torch.cat((tf_out, con_out), 1)
@@ -401,8 +401,8 @@ class TextEncoder(nn.Module):
         # concatenation
         features = None
         if self.concate == 'full':  # level 1+2+3
-            # features = torch.cat((org_out, gru_out, con_out), 1)
-            features = torch.cat((gru_out, con_out), 1)
+            features = torch.cat((org_out, gru_out, con_out), 1)
+            # features = torch.cat((gru_out, con_out), 1)
         elif self.concate == 'reduced':  # wmy
             # level 2+3
             features = torch.cat((gru_out, con_out), 1)

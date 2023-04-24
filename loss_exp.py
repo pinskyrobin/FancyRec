@@ -324,3 +324,131 @@ class CrossCLR_noq(nn.Module):
         loss = (loss_brand + loss_post) / 2
 
         return loss
+
+
+class ContrastiveLoss(nn.Module):
+
+    def __init__(self, opt, K=4096, temperature=0.03, weight_temperature=35e4, negative_weight=0.8,
+                 score_threshold=0.99, logger=None, cost_style='sum'):
+        super(ContrastiveLoss, self).__init__()
+        self.opt = opt
+        self.K = K
+        self.logit_scale = nn.Parameter(torch.ones([]))
+        self.criterion = torch.nn.CrossEntropyLoss(reduction='none')
+        self.temperature = temperature
+        self.weight_temperature = weight_temperature
+        self.score_threshold = score_threshold
+        self.logger = logger
+        self.cost_style = cost_style
+        self.negative_w = negative_weight  # Weight of negative samples logits.
+
+        # create the queue
+        self.register_buffer("queue", torch.zeros(K, self.opt.common_embedding_size))
+        # self.queue = nn.functional.normalize(self.queue, dim=0)
+        # self.queue = torch.zeros(K, self.opt.common_embedding_size)
+
+        self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
+
+    @torch.no_grad()
+    def _dequeue_and_enqueue(self, post):
+        batch_size = post.shape[0]
+
+        ptr = int(self.queue_ptr)
+        # assert self.K % batch_size == 0 for simplicity
+
+        # replace the keys at ptr (dequeue and enqueue)
+        self.queue[ptr: ptr + batch_size] = post
+        prev_ptr = ptr
+
+        self.queue_ptr[0] = (ptr + batch_size) % self.K  # move pointer
+
+        return prev_ptr
+
+    def _min_max_norm(self, tensor):
+        min_val = torch.min(tensor)
+        max_val = torch.max(tensor)
+        return (tensor - min_val) / (max_val - min_val)
+
+    def _get_positive_mask(self, tensor):
+        # diag = np.eye(batch_size)
+        # mask = torch.from_numpy(diag)
+        # mask = (1 - mask)
+
+        mask = torch.ones_like(tensor)
+        ptr = self.queue_ptr[0]
+        for i in range(tensor.shape[0]):
+            mask[i][ptr] = 0
+            ptr = ptr + 1
+        return mask.to(device)
+
+    def _get_negative_mask(self, tensor, index):
+        mask = torch.ones_like(tensor)
+        mask[index] = 0
+        return mask.to(device)
+
+    def _crossmodal_softmax(self, inter_logits, intra_logits, weight):
+        exp_inter_logits = torch.exp(inter_logits)
+        exp_intra_logits = torch.exp(intra_logits)
+        exp_sum = exp_inter_logits.sum(dim=1) + weight * exp_intra_logits.sum(dim=1)
+        return torch.diag(exp_inter_logits).t() / exp_sum
+
+    def _compute_loss(self, logits, weight):
+        loss = - torch.log(logits) * weight
+        return loss.sum()  # loss.mean()
+
+    def forward(self, brand, post):
+        # brand = nn.functional.normalize(brand, dim=1)
+        # post = nn.functional.normalize(post, dim=1)
+        # all_post = torch.cat([post, self.queue], dim=0)
+        #
+        # intra_pos_mask = self._get_positive_mask(all_post.shape[0])
+        # inter_modality_logits = brand @ post.t() / self.temperature
+        # intra_modality_logits = all_post @ all_post.t() * intra_pos_mask / self.temperature
+        #
+        # curr_post_logits = torch.sum(intra_modality_logits[: post.shape[0], : post.shape[0]].clone(), dim=1)
+        # curr_sorted_post, curr_sorted_post_index = torch.sort(curr_post_logits)
+        # curr_sorted_post = self._min_max_norm(curr_sorted_post)
+        #
+        # influential_post_index = curr_sorted_post_index[curr_sorted_post >= self.score_threshold]
+        # mask_influential_post = self._get_negative_mask(post, influential_post_index)
+        #
+        # update_queue = post * mask_influential_post
+        # prev_ptr = self._dequeue_and_enqueue(update_queue)
+        #
+        # queue_pos_mask = self._get_positive_mask(self.K)
+        # queue_logits = self.queue @ self.queue.t() * queue_pos_mask
+        # connection = torch.mean(queue_logits, dim=1)[prev_ptr: prev_ptr + post.shape[0]].clone()
+        # weight = torch.exp(connection / self.weight_temperature)
+        #
+        # logits = self._crossmodal_softmax(inter_modality_logits,
+        #                                   queue_logits[prev_ptr: prev_ptr + post.shape[0]].clone() / self.temperature,
+        #                                   self.negative_w)
+        #
+        # loss = self._compute_loss(logits, weight)
+
+        brand = nn.functional.normalize(brand, dim=1)
+        post = nn.functional.normalize(post, dim=1)
+
+        prev_ptr = self._dequeue_and_enqueue(post)
+
+        ori_logits = post @ self.queue.t()
+        queue_pos_mask = self._get_positive_mask(ori_logits)
+        inter_modality_logits = brand @ post.t() / self.temperature
+        intra_modality_logits = ori_logits * queue_pos_mask / self.temperature
+
+        # post_logits = intra_modality_logits[prev_ptr: prev_ptr + post.shape[0]]
+
+        # sum_post_logits = torch.sum(post_logits, dim=1)
+        # sorted_post, sorted_post_index = torch.sort(sum_post_logits)
+        # sorted_post = self._min_max_norm(sorted_post)
+
+        # influential_post_index = sorted_post_index[sorted_post >= self.score_threshold]
+        # mask_influential_post = self._get_negative_mask(post_logits, influential_post_index)
+
+        connection = torch.mean(intra_modality_logits, dim=1)
+        weight = torch.exp(connection / self.weight_temperature)
+
+        logits = self._crossmodal_softmax(inter_modality_logits, intra_modality_logits, self.negative_w)
+        loss = self._compute_loss(logits, weight)
+
+        return loss

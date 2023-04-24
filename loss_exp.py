@@ -329,7 +329,7 @@ class CrossCLR_noq(nn.Module):
 class ContrastiveLoss(nn.Module):
 
     def __init__(self, opt, K=4096, temperature=0.03, weight_temperature=35e4, negative_weight=0.8,
-                 score_threshold=0.99, logger=None, cost_style='sum'):
+                 score_threshold=0.99, logger=None):
         super(ContrastiveLoss, self).__init__()
         self.opt = opt
         self.K = K
@@ -339,7 +339,7 @@ class ContrastiveLoss(nn.Module):
         self.weight_temperature = weight_temperature
         self.score_threshold = score_threshold
         self.logger = logger
-        self.cost_style = cost_style
+        self.cost_style = opt.cost_style
         self.negative_w = negative_weight  # Weight of negative samples logits.
 
         # create the queue
@@ -394,7 +394,10 @@ class ContrastiveLoss(nn.Module):
 
     def _compute_loss(self, logits, weight):
         loss = - torch.log(logits) * weight
-        return loss.sum()  # loss.mean()
+        if self.cost_style == 'sum':
+            return loss.sum()  # loss.mean()
+        elif self.cost_style == 'mean':
+            return loss.mean()
 
     def forward(self, brand, post):
         # brand = nn.functional.normalize(brand, dim=1)

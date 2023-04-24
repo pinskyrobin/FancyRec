@@ -1,6 +1,6 @@
-# FGMCD
+# FancyRec
 
-Source code of **Understanding Brand’s Association: Fine-Grained Multi-Modal Content Discovery For Brands**
+Source code of **FancyRec: Fine-Grained Multi-Modal Content Discovery Recommender System For Brands**
 
 <p align="center">
   <img src="https://img.shields.io/github/package-json/version/pinskyrobin/fgmcd">
@@ -37,7 +37,7 @@ Make sure the **source** path and **target** path are right.
 **Remember**
 
 - original data -> `/root/brand/ins_Car_data`
-- your working directory -> `/root/$YOUR_USER_NAME$/FGMCD`
+- your working directory -> `/root/$YOUR_USER_NAME$/Brand`
 - feature data -> `/root/$YOUR_USER_NAME$/insCar`
 
 ```shell

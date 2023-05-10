@@ -1,20 +1,20 @@
 {
-    "name": "fgmcd",
-    "version": "2.0",
-    "description": "Source code of Understanding Brand’s Association: Fine-Grained Multi-Modal Content Discovery For Brands",
+    "name": "fancyrec",
+    "version": "3.0",
+    "description": "Source code of FancyRec: Fine-Grained Multi-Modal Content Discovery Recommender System For Brands",
     "keywords": [
-      "Brand Association",
-      "Multi-Modal",
-      "Content Discovery"
+      "social media marketing",
+      "multi-modal recommendation",
+      "content discovery for brands"
     ],
     "bugs": {
-      "url": "https://github.com/badges/pinskyrobin/FGMCD/issues"
+      "url": "https://github.com/badges/pinskyrobin/FancyRec/issues"
     },
     "license": "Apache-2.0",
     "author": "Robin Pinsky<pinskyrobin@gmail.com>",
     "repository": {
       "type": "git",
-      "url": "https://github.com/pinskyrobin/FGMCD"
+      "url": "https://github.com/pinskyrobin/FancyRec"
     },
     "dependencies": {
         "matplotlib": "3.5.2",

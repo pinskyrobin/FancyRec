@@ -3,14 +3,14 @@
 Source code of **FancyRec: Fine-Grained Multi-Modal Content Discovery Recommender System For Brands**
 
 <p align="center">
-  <img src="https://img.shields.io/github/package-json/version/pinskyrobin/fgmcd">
-  <img src="https://img.shields.io/github/repo-size/pinskyrobin/FGMCD?color">
-  <img src="https://img.shields.io/codefactor/grade/github/pinskyrobin/FGMCD/main">
+  <img src="https://img.shields.io/github/package-json/version/pinskyrobin/fancyrec">
+  <img src="https://img.shields.io/github/repo-size/pinskyrobin/FancyRec?color">
+  <img src="https://img.shields.io/codefactor/grade/github/pinskyrobin/FancyRec/main">
 </p>
 
-![FGMCD](FGMCD.png)
+![FancyRec](FancyRec.svg)
 
-**Keywords**: Brand Association, Multi-Modal Content Discovery, Fine-Grained Video Retrieval
+**Keywords**: social media marketing, multi-modal recommendation, content discovery for brands
 
 ## Requirements
 <p align="center">
@@ -69,6 +69,7 @@ Remember
 Run the following script to test the model.
 
 ```shell
+# PLEASE make sure EDIT your test file before testing
 cd bin
 sh test_instance.sh # on instance
 # OR
@@ -78,6 +79,11 @@ sh test_public_cluster.sh # on slurm
 # for example, `sh test_instance.sh 2`
 # will test model named `checkpoint_epoch_2.pth.tar`
 sh test_instance.sh $epoch$ 
+# OR
+# test specific model
+# for example, `sh test_instance.sh demo`
+# will test `demo` model named `model_best.pth.tar`
+sh test_instance.sh $model_name$ 
 ```
 
 Remember

@@ -47,6 +47,7 @@ def euclidean_sim(im, s):
     return score
 
 
+# 实验测试用loss，仅设计品牌隐向量
 class LabLoss(nn.Module):
     def __init__(self):
         super(LabLoss, self).__init__()
@@ -62,6 +63,7 @@ class LabLoss(nn.Module):
         return loss_lab / s.size(0)
 
 
+# 传统的三元组损失（带排序权重）
 class TripletLoss(nn.Module):
     """
     triplet ranking loss

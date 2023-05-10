@@ -1,4 +1,4 @@
-# encoding:utf-8
+# -*- coding: utf-8 -*-
 from __future__ import print_function
 import pickle
 import os
@@ -7,7 +7,7 @@ import torch
 
 import evaluator
 from util.imgbigfile import ImageBigFile
-from model import FGMCD
+from model import FancyRec
 import util.data_provider as data
 from preprocess.text2vec import get_text_encoder
 from preprocess.vocab import Vocabulary
@@ -22,12 +22,8 @@ from util.common import makedirsforfile, checkToSkip
 from evaluator import test_post_ranking
 import sys
 
-"""单独跑测试
-"""
-
 
 def parse_args():
-    # Hyper Parameters
     parser = argparse.ArgumentParser()
     parser.add_argument('testCollection', type=str, help='test collection')
     parser.add_argument('--rootpath', type=str, default=ROOT_PATH, help='path to datasets. (default: %s)' % ROOT_PATH)
@@ -40,6 +36,8 @@ def parse_args():
                         help='name of checkpoint (default: model_best.pth.tar)')
     parser.add_argument('--n_caption', type=int, default=20,
                         help='number of captions of each image/video_frames (default: 1)')
+    parser.add_argument('--level_vis', type=str, default='1+2+3', help='ablation study of visual enc')
+    parser.add_argument('--level_txt', type=str, default='1+2+3', help='ablation study of text enc')
     args = parser.parse_args()
     return args
 
@@ -58,16 +56,10 @@ def main():
     testCollection = opt.testCollection
     n_caption = opt.n_caption
     resume = os.path.join(opt.logger_name, opt.checkpoint_name)
-    # print(resume)
     if not os.path.exists(resume):
         logging.info(resume + ' not exists.')
         sys.exit(0)
 
-    # from functools import partial
-    # import pickle
-    # pickle.load = partial(pickle.load, encoding="latin1")
-    # pickle.Unpickler = partial(pickle.Unpickler, encoding="latin1")
-    # checkpoint = torch.load(resume, map_location=lambda storage, loc: storage, pickle_module=pickle)
     checkpoint = torch.load(resume)
     start_epoch = checkpoint['epoch']
     best_rsum = checkpoint['best_rsum']
@@ -81,14 +73,11 @@ def main():
     output_dir = resume.replace(trainCollection, testCollection)
     output_dir = output_dir.replace('/%s/' % options.cv_name, '/results/%s/' % trainCollection)
     pred_error_matrix_file = os.path.join(output_dir, 'pred_errors_matrix.pth.tar')
-    # print(pred_error_matrix_file)
     if checkToSkip(pred_error_matrix_file, opt.overwrite):
         sys.exit(0)
     makedirsforfile(pred_error_matrix_file)
 
-    # data loader prepare
     caption_files = {'test': os.path.join(rootpath, testCollection, 'TextData', '%s.caption.txt' % testCollection)}
-    # options变量是从检查点中取出
     video_feat_path = os.path.join(rootpath, testCollection, 'FeatureData', options.video_feature)
     img_feat_path = os.path.join(rootpath, testCollection, 'FeatureData', options.img_feature)
     video_feats = {'test': ImageBigFile(video_feat_path)}
@@ -97,34 +86,24 @@ def main():
     video2frames = {'test': read_dict(
         os.path.join(rootpath, testCollection, 'FeatureData', options.video_feature, 'video2frames.txt'))}
 
-    # set bow vocabulary and encoding
     bow_vocab_file = os.path.join(rootpath, options.trainCollection, 'TextData', 'vocabulary', 'bow',
                                   options.vocab + '.pkl')
     bow_vocab = pickle.load(open(bow_vocab_file, 'rb'))
     bow2vec = get_text_encoder('bow')(bow_vocab)
-    # print("bow2vec:", len(bow_vocab))
-    # print(bow_vocab)
     options.bow_vocab_size = len(bow_vocab)
 
-    # set rnn vocabulary 
     rnn_vocab_file = os.path.join(rootpath, options.trainCollection, 'TextData', 'vocabulary', 'rnn',
                                   options.vocab + '.pkl')
     rnn_vocab = pickle.load(open(rnn_vocab_file, 'rb'))
     options.vocab_size = len(rnn_vocab)
-    # print("rnn_vocalb:", len(rnn_vocab))
     print("prepare dataloader..")
-    # set data loader
     data_loader = data.get_test_data_loaders(opt,
                                              caption_files, video_feats, img_feats, rnn_vocab, bow2vec,
                                              options.text_net, opt.batch_size, opt.workers, opt.n_caption,
                                              video2frames=video2frames)
 
-    # Construct the model
-    model = FGMCD(options).to(device)
+    model = FancyRec(options).to(device)
     model.load_state_dict(checkpoint['model'])
-    # parallel
-    # model = torch.nn.DataParallel(model, device_ids=[0, 1, 2, 3, 4])
-    # model = nn.parallel.data_parallel(model, device_ids=[0, 1, 2, 3, 4])
     model.Eiters = checkpoint['Eiters']
 
     brands, post_embs = evaluator.encode_data(model, data_loader['test'], opt.log_step, logging.info)

@@ -23,7 +23,7 @@ Source code of **FancyRec: Fine-Grained Multi-Modal Content Discovery Recommende
 We used virtualenv to setup a deep learning workspace that supports PyTorch.
 Run the following script to install the required packages.
 
-### Required Data
+### About dataset
 
 Original data can be accessed through the specific server from HITSZ.
 Contact relevant person for more information.

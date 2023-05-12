@@ -73,9 +73,9 @@ def encode_data(model, data_loader, log_step=10, logging=print):
 
             if i % log_step == 0:
                 logging('Process: [{0:2d}/{1:2d}]\t'
-                        '{e_log}\t'
+                        # '{e_log}\t'
                         'Time {batch_time.val:.3f} ({batch_time.avg:.3f})\t'.format(
-                            i, len(data_loader), batch_time=batch_time, e_log=str(model.logger)))
+                            i, len(data_loader), batch_time=batch_time))
             del videos, captions
 
         return brands, post_embs

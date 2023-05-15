@@ -45,7 +45,7 @@ def parse_args():
     parser.add_argument('--overwrite', type=int, default=0, choices=[0, 1], help='overwrite existed file. (default: 0)')
 
     # model
-    parser.add_argument('--model', type=str, default='dual_encoding', help='model name. (default: dual_encoding)')
+    parser.add_argument('--model', type=str, default='FancyRec', help='model name. (default: FancyRec)')
     parser.add_argument('--measure', type=str, default='cosine', help='measure method. (default: cosine)')
     parser.add_argument('--dropout', default=0.2, type=float, help='dropout rate (default: 0.2)')
 

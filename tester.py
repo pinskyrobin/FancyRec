@@ -61,10 +61,7 @@ def main():
         sys.exit(0)
 
     checkpoint = torch.load(resume)
-    start_epoch = checkpoint['epoch']
-    best_rsum = checkpoint['best_rsum']
-    print("=> loaded checkpoint '{}' (epoch {}, best_rsum {})"
-          .format(resume, start_epoch, best_rsum))
+    print("=> loaded!")
     options = checkpoint['opt']
     if not hasattr(options, 'concate'):
         setattr(options, "concate", "full")
@@ -96,7 +93,7 @@ def main():
                                   options.vocab + '.pkl')
     rnn_vocab = pickle.load(open(rnn_vocab_file, 'rb'))
     options.vocab_size = len(rnn_vocab)
-    print("prepare dataloader..")
+    print("=> prepare dataloader..")
     data_loader = data.get_test_data_loaders(opt,
                                              caption_files, video_feats, img_feats, rnn_vocab, bow2vec,
                                              options.text_net, opt.batch_size, opt.workers, opt.n_caption,
@@ -109,15 +106,11 @@ def main():
     brands, post_embs = evaluator.encode_data(model, data_loader['test'], opt.log_step, logging.info)
 
     ranking_metrics = test_post_ranking(options.brand_num, options.metric, model, post_embs, brands)
-    
-    print('MedR:', ranking_metrics[0])
-    print('MeanR:', ranking_metrics[1])
+
     print('AUC[0-1]:', ranking_metrics[2])
     print('NDCG@10[0-1]:', ranking_metrics[3])
     print('NDCG@50[0-1]:', ranking_metrics[4])
     print('recall@1:', ranking_metrics[5])
-    print('recall@5:', ranking_metrics[6])
-    print('recall@10:', ranking_metrics[7])
 
 
 if __name__ == '__main__':

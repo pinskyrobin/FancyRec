@@ -8,7 +8,7 @@ Source code of **FancyRec: Fine-Grained Multi-Modal Content Discovery Recommende
   <img src="https://img.shields.io/codefactor/grade/github/pinskyrobin/FancyRec/main">
 </p>
 
-![FancyRec](FancyRec.svg)
+![FancyRec](FancyRec.png)
 
 **Keywords**: social media marketing, multi-modal recommendation, content discovery for brands
 
